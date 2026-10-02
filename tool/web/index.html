@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>咸鱼喵喵 · 截图辅助工具</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topsticky">
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-name">咸鱼喵喵 · 截图辅助工具</span>
+    <span class="brand-sub">粉丝向 · 仅供个人截图与内容创作</span>
+  </div>
+  <div class="status-wrap">
+    <span id="connDot" class="dot"></span>
+    <span id="connText">正在检测…</span>
+  </div>
+</header>
+
+<!-- 游戏状态条 -->
+<section class="statusbar">
+  <div class="stat"><label>地图</label><b id="st-map">—</b></div>
+  <div class="stat"><label>坐标</label><b id="st-pos">—</b></div>
+  <div class="stat"><label>血量</label><b id="st-hp">—</b></div>
+  <div class="stat"><label>已开开关</label><b id="st-sw">—</b></div>
+  <div class="stat"><label>重力</label><b id="st-grav">—</b></div>
+  <div class="stat"><label>无敌</label><b id="st-inv">—</b></div>
+  <!-- 当前连的是沙盒还是原版。连到原版时会变红 —— 那时任何操作都在动正式存档 -->
+  <div class="stat game-src" id="st-src-wrap"><label>当前连接</label><b id="st-src">—</b></div>
+</section>
+
+<!-- 常驻快捷开关：不放在二级页面里，任何标签页下都能直接点 -->
+<section class="quickbar">
+  <span class="qb-label">状态</span>
+  <button class="chip" id="q-gravity"    title="高亮 = 重力正常；点一下关掉重力，角色会悬空">重力</button>
+  <button class="chip" id="q-invincible" title="高亮 = 无敌中（不会掉血）">无敌</button>
+  <button class="chip" id="q-noclip"     title="高亮 = 穿墙中（无视碰撞体）">穿墙</button>
+  <button class="chip on" id="q-lily"    title="高亮 = 莉莉娅在画面里；点一下把她藏起来">莉莉娅</button>
+
+  <span class="qb-sep"></span>
+  <span class="qb-label">拍照</span>
+  <button class="chip on" id="q-msg" title="高亮 = 对话框显示中；点一下藏起来拍干净的场景（只是藏，随时能显示回来）">对话框</button>
+  <button class="chip on" id="q-art" title="高亮 = 立绘显示中">立绘</button>
+  <button class="chip on" id="q-hud" title="高亮 = 游戏界面（血条、小地图等）显示中">游戏界面</button>
+
+  <span class="qb-sep"></span>
+  <button class="chip danger" id="q-restore" title="恢复重力、碰撞、无敌，撤销摆拍并解除数值锁定（已修改的数值和物品不回退）">全部还原</button>
+</section>
+</div>
+
+<div class="note" id="photo-state" role="status"></div>
+<nav class="tabs">
+  <button class="tab active" data-panel="teleport">传送</button>
+  <button class="tab" data-panel="story">对话剧情</button>
+  <button class="tab" data-panel="trainer">角色与背包</button>
+  <button class="tab" data-panel="switches">开关</button>
+  <button class="tab" data-panel="saves">存档与沙盒</button>
+  <button class="tab" data-panel="settings">设置</button>
+</nav>
+
+<main>
+  <section class="panel" id="panel-trainer">
+    <div class="card">
+      <h2>金币、生命与能量</h2>
+      <div class="row"><span id="trainer-role">请先连接游戏并进入地图</span><button id="trainer-refresh">刷新数值与背包</button></div>
+      <p class="hint">作用于当前操作的角色，喵露露／莉莉娅切换形态后仍有效。输入数值后点「设值」或「设值并锁定」；锁定后不随消耗或拾取变化。修改当前值，不改变最大值。</p>
+      <div id="trainer-stats" class="trainer-stats"></div>
+      <p class="hint">数值锁定只在本次游戏中有效；读档、新游戏或面板失联超过 2 分钟自动解除。「全部还原」也会解除锁定，已修改的数值与物品不回退。</p>
+    </div>
+    <div class="card">
+      <h2>背包物品</h2>
+      <p class="hint">直接修改当前背包，游戏正常存档时会保存。移除已装备的饰品／宝石会同时卸下；移除当前武器会换到另一件已有武器。新增宝石按游戏规则自动启用。</p>
+      <div class="row">
+        <input id="trainer-search" type="search" placeholder="搜索物品名称、描述或编号" aria-label="搜索背包物品">
+        <select id="trainer-category" aria-label="物品分类"><option value="">全部分类</option><option value="consumables">消耗品</option><option value="weapons">武器</option><option value="stones">宝石</option><option value="ornaments">饰品</option><option value="special">特殊材料</option></select>
+        <label><input id="trainer-owned" type="checkbox">只看已拥有</label>
+        <label><input id="trainer-overcap" type="checkbox">允许超过消耗品携带上限</label>
+      </div>
+      <div id="trainer-items" class="list tall"><div class="empty">连接后读取背包</div></div>
+    </div>
+  </section>
+
+
+  <!-- ========== 传送 ========== -->
+  <section class="panel active" id="panel-teleport">
+    <div class="card">
+      <h2>坐标传送</h2>
+      <p class="hint">
+        输入目标格子的横纵坐标。<b>坐标超出地图范围会被自动夹到边界。</b>
+      </p>
+
+      <div class="note">
+        <b>传送默认进入「悬浮」状态</b>（暂停重力 + 穿墙）。<br>
+        这是为了避开游戏的<b>坠落复位</b>机制 —— 直接落到坑洞地形上，游戏会判定你掉下去了，
+        播掉落音效并把你弹回"上次站立的位置"，如果这个记录还是上一张地图的，人就会直接消失。<br>
+        想站到地上走动时，点下面的<b>「落地」</b>（会先探测脚下安不安全）。
+      </div>
+      <div class="note warn-note">
+        ⚠️ <b>悬浮时别按跳跃键</b> —— 跳跃给了向上的速度，而重力是关掉的，
+        <b>没有任何力把它拉回来，人会一直往上飘</b>。<br>
+        想恢复正常走动：点 <b>「落地」</b>，或顶部 <b>「全部还原」</b>。
+      </div>
+
+      <div class="row mt">
+        <label>X <input type="number" id="tp-x" min="0" step="1" value="0"></label>
+        <label>Y <input type="number" id="tp-y" min="0" step="1" value="0"></label>
+        <button class="primary" id="tp-go">传送（悬浮）</button>
+        <button id="tp-here">填入当前坐标</button>
+        <button id="tp-land">落地</button>
+      </div>
+      <div class="row mt">
+        <label>微调</label>
+        <button data-nudge="-1,0">←</button>
+        <button data-nudge="1,0">→</button>
+        <button data-nudge="0,-1">↑</button>
+        <button data-nudge="0,1">↓</button>
+        <span class="pill" id="tp-state">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>本图事件</h2>
+      <p class="hint">
+        默认只列出<b>带剧情的事件</b>（显示台词），也就是截图真正要用的那些。
+        金币、平台、装饰这类走「显示全部事件」。
+      </p>
+      <div class="row">
+        <button id="ev-load">读取本图事件</button>
+        <input type="search" id="ev-filter" placeholder="按台词 / 说话人 / 立绘名筛选…">
+        <label class="chk"><input type="checkbox" id="ev-all"> 显示全部事件</label>
+      </div>
+      <div class="list" id="ev-list"><div class="empty">点「读取本图事件」加载</div></div>
+    </div>
+
+    <div class="card warn-card">
+      <h2>场景还原（摆拍）</h2>
+      <p class="hint">
+        找出本图<b>本该可见却没出现</b>的角色，强行让它们出现。
+        用于「对话框在说话、画面里却没人」的情况。
+      </p>
+      <div class="note">
+        <b>⚠️ 这是摆拍，不是把游戏改回当时的样子。</b><br>
+        · 被游戏标记为「已抹除」的事件强行拉出来，它<b>不会执行任何指令</b>，
+        只是一个站着的立绘；站位也不一定和原作一致。<br>
+        · 摆拍会固定角色，自动和手动存档照常。不推荐摆拍时保存：读档后状态可能无法完整恢复。完成后可点<b>「撤销场景还原」</b>恢复原来的事件状态。
+        切图、读档或面板失联两分钟也会撤销摆拍。<br>
+        · 如果这条对话有「运行过场」可用，<b>优先用那个</b>——那个是真的在重现演出。
+      </div>
+      <div class="row">
+        <button id="lost-scan">扫描本图角色</button>
+        <button class="primary" id="lost-restore-all">恢复被抹除的</button>
+        <button id="lost-restore-hidden">连同游戏隐藏的一起</button>
+        <button id="lost-unpin">撤销场景还原</button>
+      </div>
+      <div class="row mt">
+        <span class="pill" id="lost-hint">还没扫描</span>
+      </div>
+      <div class="list" id="lost-list"><div class="empty">点「扫描本图角色」看看本图现在有谁、缺谁</div></div>
+    </div>
+  </section>
+
+  <!-- ========== 对话跳转点 ========== -->
+  <section class="panel" id="panel-story">
+    <div class="card">
+      <h2>对话剧情</h2>
+      <p class="hint">
+        连接后自动读取台词，支持全文搜索。<br>从游戏数据里解析出的 <b id="story-count">—</b> 条剧情触发点。
+      </p>
+      <div class="note">
+        <b>三种复现方式，优先试「运行过场」</b><br>
+        · <b>运行过场</b> —— 执行含这段对话的<b>整个事件页</b>。
+        NPC 站位、演出、对白全按原样走，<b>画面最接近原作</b>。通关存档也能用。<br>
+        &nbsp;&nbsp;&nbsp;注意：一整段过场会从头播，可能包含好几段对话，一路截图即可。<br>
+        · <b>只播台词</b> —— 只调那一段对白，跳过节目前的演出。快，但
+        <b>场景里的 NPC 可能不在场</b>（那些角色是靠前面的指令摆出来的）。<br>
+        · <b>前往</b> —— 打开所需开关 + 传送，你自己走过去。存档没通关时场景最自然。
+      </div>
+      <p class="hint" id="story-text-hint"></p>
+      <div class="row">
+        <input type="search" id="story-filter" placeholder="全文搜索：台词 / 说话人 / 地图 / 开关名…">
+        <label class="chk"><input type="checkbox" id="story-only-actionable" checked> 只看可跳转的</label>
+        <label class="chk"><input type="checkbox" id="story-need-switch"> 只看需要开关的</label>
+      </div>
+      <div class="row mt">
+        <button id="story-load-text">重新读取台词</button>
+        <button id="story-close-msg">关闭对话窗口</button>
+        <span class="pill">截完图用它收尾</span>
+      </div>
+      <div class="list tall" id="story-list"><div class="empty">正在载入…</div></div>
+    </div>
+  </section>
+
+  <!-- ========== 开关 ========== -->
+  <section class="panel" id="panel-switches">
+    <div class="card">
+      <h2>开关</h2>
+      <p class="hint">
+        默认只显示<b>常用开关</b>——即"隐藏对话触发条件里真正会用到的那 114 个"，
+        比翻全部 360 个高效得多。需要时可以展开全部。
+      </p>
+      <div class="row">
+        <input type="search" id="sw-filter" placeholder="按开关名或编号搜索…">
+        <button id="sw-toggle-all">展开全部 360 个</button>
+        <button id="sw-reload">刷新状态</button>
+      </div>
+      <div class="row mt">
+        <span class="pill" id="sw-mode">当前：常用开关</span>
+      </div>
+      <div class="list tall" id="sw-list"><div class="empty">正在载入…</div></div>
+    </div>
+  </section>
+
+  <!-- ========== 存档与沙盒 ========== -->
+  <section class="panel" id="panel-saves">
+    <div class="card warn-card">
+      <h2>⚠️ 用之前先读这段</h2>
+      <ul class="warn-list">
+        <li>本工具会改游戏<b>运行时状态</b>（坐标、开关、物理），<b>不改游戏程序和素材；保存、还原会写入明确选定的存档目录</b>。</li>
+        <li>作弊状态下游戏可能自动存盘，落到 <code>file0</code>（自动存档槽）。</li>
+        <li>本游戏启用了 <b>Steam 云存档</b>。直接在原版游戏上折腾，被污染的存档可能被同步上去且追不回来。</li>
+        <li><b>所以推荐用沙盒：把游戏整体拷一份，在副本里折腾。</b>副本不在 Steam 库里，云同步够不着。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>沙盒副本</h2>
+      <p class="hint">复制游戏及存档（排除工具和发布版目录），所有操作都在副本里进行。</p>
+      <div class="row">
+        <button class="primary" id="sb-create">创建沙盒副本</button>
+        <button id="sb-status">刷新状态</button>
+      </div>
+      <div class="note" id="sb-info">—</div>
+    </div>
+
+    <div class="card">
+      <h2>存档备份</h2>
+      <p class="hint">把 <code>save/</code> 整个目录复制一份存档。原版和沙盒可以分别备份。</p>
+      <div class="row">
+        <button id="bk-original">备份原版存档</button>
+        <button id="bk-sandbox">备份沙盒存档</button>
+        <button id="bk-reload">刷新列表</button>
+      </div>
+      <div class="row"><label>还原目标 <select id="bk-target"><option value="">请选择目标</option><option value="sandbox">沙盒存档</option><option value="original">原版存档</option></select></label></div>
+      <div class="list" id="bk-list"><div class="empty">—</div></div>
+    </div>
+
+    <div class="card">
+      <h2>存「拍照专用档」</h2>
+      <p class="hint">
+        把当前游戏状态存进一个存档槽。摆拍时也可保存，但不保证读档后完整恢复角色、UI 或对白。
+        工具会先自动备份整个存档目录，再让游戏自己存。
+      </p>
+      <div class="note">
+        <b>⚠️ 会覆盖该槽位原有的进度。</b>
+        你的 24 个槽位（0 是自动存档，1~23 是手动）目前<b>全部占用</b>，
+        没有空槽可用——所以请自己挑一个不在乎的槽。
+      </div>
+      <div class="row">
+        <label>存到槽位 <input type="number" id="photo-slot" min="1" max="23" step="1" value="23"></label>
+        <span>实际保存目录：<code id="photo-target">未连接</code></span>
+        <button class="danger" id="photo-save">存为拍照档</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>关于这个工具</h2>
+      <p class="hint">
+        粉丝向的截图辅助工具，用于个人复现「错过就没了」的剧情并截图。<br>
+        不包含、不打包任何游戏素材；不提供成就解锁功能；不修改游戏任何文件。<br>
+        按作者 readme 的要求，<b>请勿用本工具提取或传播游戏素材</b>。
+      </p>
+    </div>
+  </section>
+
+  <!-- ========== 设置 ========== -->
+  <section class="panel" id="panel-settings">
+    <div class="card">
+      <h2>端口与路径</h2>
+      <p class="hint">
+        改完点保存即可生效，配置文件写在 <code id="set-path">tool/config.json</code>。
+      </p>
+      <div class="form">
+        <label class="field">
+          <span>游戏调试端口</span>
+          <input type="number" id="set-cdpPort" min="1024" max="65535">
+          <em>工具靠这个端口连游戏。原版通常 9222，沙盒建议 9223，两个别撞车。</em>
+        </label>
+        <label class="field">
+          <span>控制面板端口</span>
+          <input type="number" id="set-webPort" min="1024" max="65535">
+          <em>浏览器打开面板用的端口。<b>改这个要重启工具才生效。</b></em>
+        </label>
+        <label class="field">
+          <span>沙盒副本目录</span>
+          <input type="text" id="set-sandboxDir">
+          <em>把游戏拷一份到这里。建议放在 Steam 库外面，云同步才够不着。</em>
+        </label>
+      </div>
+      <div class="row mt">
+        <button class="primary" id="set-save">保存设置</button>
+        <button id="set-reset">恢复默认值</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>怎么启动这个工具</h2>
+      <ol class="steps">
+        <li>双击 <code>tool\启动.bat</code></li>
+        <li>它会自动：检查 SDK 版 NW.js → 备份存档 → 启动游戏 → 启动本服务 → 打开浏览器</li>
+        <li>在游戏里<b>正常读档</b>进入地图（工具不能替你读档，见开发文档第 6 节）</li>
+      </ol>
+      <div class="note">
+        <b>只想启动某一部分？</b><br>
+        · 只起控制面板（游戏已经在跑）：在这个目录执行 <code>node server.js</code><br>
+        · 只启动游戏：<code>nw.exe "沙盒目录" --remote-debugging-port=9223</code><br>
+        · 改了控制面板端口后，要关掉旧的服务窗口再重新 <code>node server.js</code>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>当前状态</h2>
+      <div class="list" id="set-info"><div class="empty">—</div></div>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

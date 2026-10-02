@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "files": [
+    "tool/启动.bat",
+    "tool/停止面板.bat",
+    "tool/launcher.js",
+    "tool/server.js",
+    "tool/lib/safety.js",
+    "tool/lib/files.js",
+    "tool/lib/processes.js",
+    "tool/lib/cdp.js",
+    "tool/lib/probe-game.js",
+    "tool/lib/ops.js",
+    "tool/lib/photo-state.js",
+    "tool/lib/trainer.js",
+    "tool/lib/story-position.js",
+    "tool/lib/data.js",
+    "tool/lib/story-cache.js",
+    "tool/web/app.js",
+    "tool/web/index.html",
+    "tool/web/style.css",
+    "tool/README.md",
+    "tool/使用须知.md",
+    "tool/发布清单.json",
+    "out/triggers.csv",
+    "unpacked/data/System.json",
+    "unpacked/data/MapInfos.json",
+    "README.md",
+    ".gitignore"
+  ],
+  "optionalRuntime": "nwjs-sdk-v0.64.1-win-x64/",
+  "note": "本包仅含工具及必要结构索引；台词从游戏运行时读取。Node.js 和 NW.js SDK 需另行安装。"
+}

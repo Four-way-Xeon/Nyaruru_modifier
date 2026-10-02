@@ -1,0 +1,37 @@
+# 本机配置、日志和存档不提交。
+/tool/config.json
+/tool/.server-runtime.json
+/tool/index/
+/backups/
+/backup_save_*/
+**/save/
+*.rmmzsave
+*.log
+*.tmp
+*.bak
+.last_backup
+
+# 运行环境另行下载。
+/nwjs-sdk-*/
+*.zip
+
+# 仅提交运行必需的结构索引，排除完整提取数据。
+/out/*
+!/out/triggers.csv
+/unpacked/*
+!/unpacked/data/
+/unpacked/data/*
+!/unpacked/data/System.json
+!/unpacked/data/MapInfos.json
+
+# 开发资料和本地备份。
+/probe/
+/dumpapp/
+/samples/
+/_同步前备份_*/
+/_撤回误改留档_*/
+/claude-update-*/
+/公开发布/
+Thumbs.db
+desktop.ini
+.DS_Store
