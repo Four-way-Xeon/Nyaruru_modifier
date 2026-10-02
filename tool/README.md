@@ -4,13 +4,13 @@
 
 需要 Windows、已安装的《咸鱼喵喵》、[Node.js 22 或更新版本](https://nodejs.org/)，以及 [NW.js SDK 0.64.1（Windows x64）](https://dl.nwjs.io/v0.64.1/nwjs-sdk-v0.64.1-win-x64.zip)。发布包不含游戏本体、存档、完整剧本和上述运行环境；无需 npm install。
 
-1. 将包内的 `aitemp截图&修改工具` 文件夹放进游戏安装目录，与游戏的 `package.json` 同级。可从 Steam 的“管理 → 浏览本地文件”找到游戏目录。
-2. 解压 NW.js SDK，把 `nwjs-sdk-v0.64.1-win-x64` 文件夹放进 `aitemp截图&修改工具`。确认路径如下，别多套一层文件夹：
+1. 将下载解压后、包含 `tool`、`out`、`unpacked` 的整个工具文件夹放进游戏安装目录，与游戏的 `package.json` 同级。外层文件夹名称不限，保留下载后的名字即可，无需另建 `aitemp` 文件夹。可从 Steam 的“管理 → 浏览本地文件”找到游戏目录。
+2. 解压 NW.js SDK，把 `nwjs-sdk-v0.64.1-win-x64` 文件夹放进上述工具文件夹。保留内部目录结构，别多套一层文件夹：
 
    ```text
    游戏目录
    ├─package.json
-   └─aitemp截图&修改工具
+   └─工具文件夹（名称不限）
        ├─README.md
        ├─.gitignore
        ├─nwjs-sdk-v0.64.1-win-x64  ← 另行下载并解压
