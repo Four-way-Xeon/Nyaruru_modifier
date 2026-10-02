@@ -4,18 +4,30 @@
 
 需要 Windows、已安装的《咸鱼喵喵》、[Node.js 22 或更新版本](https://nodejs.org/)，以及 [NW.js SDK 0.64.1（Windows x64）](https://dl.nwjs.io/v0.64.1/nwjs-sdk-v0.64.1-win-x64.zip)。发布包不含游戏本体、存档、完整剧本和上述运行环境；无需 npm install。
 
-1. 将包内的 `aitemp截图工具` 文件夹放进游戏安装目录，与游戏的 `package.json` 同级。可从 Steam 的“管理 → 浏览本地文件”找到游戏目录。
-2. 解压 NW.js SDK，把 `nwjs-sdk-v0.64.1-win-x64` 文件夹放进 `aitemp截图工具`。确认路径如下，别多套一层文件夹：
+1. 将包内的 `aitemp截图&修改工具` 文件夹放进游戏安装目录，与游戏的 `package.json` 同级。可从 Steam 的“管理 → 浏览本地文件”找到游戏目录。
+2. 解压 NW.js SDK，把 `nwjs-sdk-v0.64.1-win-x64` 文件夹放进 `aitemp截图&修改工具`。确认路径如下，别多套一层文件夹：
 
    ```text
-   游戏目录/
-     package.json
-     aitemp截图工具/
-       tool/启动.bat
-       nwjs-sdk-v0.64.1-win-x64/nw.exe
-       out/triggers.csv
-       unpacked/data/...
+   游戏目录
+   ├─package.json
+   └─aitemp截图&修改工具
+       ├─README.md
+       ├─.gitignore
+       ├─nwjs-sdk-v0.64.1-win-x64  ← 另行下载并解压
+       │  └─nw.exe
+       ├─out
+       │  └─triggers.csv
+       ├─tool
+       │  ├─启动.bat
+       │  ├─停止面板.bat
+       │  ├─lib
+       │  └─web
+       └─unpacked
+           └─data
+               ├─System.json
+               └─MapInfos.json
    ```
+   （仅列出主要文件；NW.js SDK 文件夹需完整保留。）
 
 3. 先在原游戏中正常保存一次并退出。双击 `tool/启动.bat`，首次选择 **1：只启动面板**，在“存档与沙盒”页创建游戏副本。副本需要额外磁盘空间，默认放在游戏所在盘的 `Nyaruru_shots` 文件夹。
 4. 副本创建完成后，再次双击 `启动.bat`，工具会备份存档并启动副本游戏。在游戏里正常读档进入地图，确认面板顶部连接的是沙盒。
