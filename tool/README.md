@@ -8,9 +8,9 @@
 2. 解压 NW.js SDK，把 `nwjs-sdk-v0.64.1-win-x64` 文件夹放进上述工具文件夹。保留内部目录结构，别多套一层文件夹：
 
    ```text
-   游戏目录
+   Nyaruru（游戏目录）
    ├─package.json
-   └─工具文件夹（名称不限）
+   └─Nyaruru_modifier（名字不限）
        ├─README.md
        ├─.gitignore
        ├─nwjs-sdk-v0.64.1-win-x64  ← 另行下载并解压
