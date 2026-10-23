@@ -35,7 +35,7 @@
 <!-- 常驻快捷开关：不放在二级页面里，任何标签页下都能直接点 -->
 <section class="quickbar">
   <span class="qb-label">状态</span>
-  <button class="chip" id="q-gravity"    title="高亮 = 重力正常；点一下关掉重力，角色会悬空">重力</button>
+  <button class="chip" id="q-gravity"    title="高亮 = 悬停；空中可连续点跳、按下下降，保留技能位移；再点安全落地">悬停</button>
   <button class="chip" id="q-invincible" title="高亮 = 无敌中（不会掉血）">无敌</button>
   <button class="chip" id="q-noclip"     title="高亮 = 穿墙中（无视碰撞体）">穿墙</button>
   <button class="chip on" id="q-lily"    title="高亮 = 莉莉娅在画面里；点一下把她藏起来">莉莉娅</button>
@@ -54,15 +54,43 @@
 <div class="note" id="photo-state" role="status"></div>
 <nav class="tabs">
   <button class="tab active" data-panel="teleport">传送</button>
+  <button class="tab" data-panel="world-map">地图</button>
   <button class="tab" data-panel="story">对话剧情</button>
   <button class="tab" data-panel="trainer">角色与背包</button>
+  <button class="tab" data-panel="encyclopedia">收集百科</button>
   <button class="tab" data-panel="switches">开关</button>
   <button class="tab" data-panel="saves">存档与沙盒</button>
   <button class="tab" data-panel="settings">设置</button>
 </nav>
 
 <main>
+  <section class="panel" id="panel-world-map">
+    <div class="card">
+      <h2>世界地图 <span class="tag">原版房间布局</span></h2>
+      <div class="row world-map-controls">
+        <label>大区域 <select id="world-map-region"><option value="">全部区域</option></select></label>
+        <label>地图页 <select id="world-map-page" aria-label="地图页"></select></label>
+        <label>收集物 <select id="world-map-type"><option value="">全部类型</option></select></label>
+        <label><input type="checkbox" id="world-map-missing">只看未收集</label>
+      </div>
+      <div class="row mt"><button id="world-map-locate">定位当前</button><button id="world-map-fit">适应地图</button><button id="world-map-minus" aria-label="缩小地图">−</button><button id="world-map-plus" aria-label="放大地图">＋</button><button id="world-map-refresh">刷新</button><span id="world-map-summary" class="meta" role="status">连接游戏后可查看</span></div>
+      <p class="hint">拖动平移，滚轮缩放；点击方格或图标查看详情。彩色：未收集 · 灰色 ✓：已收集 · ?：状态未知 · 虚线：未探索 · 绿色框：当前位置。查看完整布局不会更改探索记录。</p>
+      <div class="world-map-layout">
+        <div id="world-map-viewport" tabindex="0" aria-label="世界地图：方向键平移，加减键缩放">
+          <svg id="world-map-svg" role="img" aria-label="原版房间与收集物地图"><g id="world-map-drawing"></g></svg>
+          <div id="world-map-empty" class="empty">连接游戏后打开地图</div>
+        </div>
+        <aside id="world-map-detail" class="world-map-detail" aria-label="所选分块详情"><p class="hint">点击地图上的方格或收集图标查看详情。</p></aside>
+      </div>
+      <p class="hint" id="world-map-coverage"></p>
+    </div>
+  </section>
   <section class="panel" id="panel-trainer">
+    <div class="card">
+      <h2>伤害与受击倍率</h2>
+      <div class="row"><label>伤害倍率 <input id="combat-outgoing" type="number" min="0" max="1000" step="0.1" value="1"></label><label>受击倍率 <input id="combat-incoming" type="number" min="0" max="1000" step="0.1" value="1"></label><button id="combat-apply" class="primary">应用倍率</button><label><input type="checkbox" id="combat-onehit">一击秒杀</label><button id="combat-reset">恢复正常战斗</button></div>
+      <p id="combat-status" class="hint">1 倍为正常；0 倍不扣血。秒杀在玩家或莉莉娅的有效攻击命中敌人时生效，不突破剧情无敌。倍率不改变基础攻击力。</p>
+    </div>
     <div class="card">
       <h2>金币、生命与能量</h2>
       <div class="row"><span id="trainer-role">请先连接游戏并进入地图</span><button id="trainer-refresh">刷新数值与背包</button></div>
@@ -71,18 +99,21 @@
       <p class="hint">数值锁定只在本次游戏中有效；读档、新游戏或面板失联超过 2 分钟自动解除。「全部还原」也会解除锁定，已修改的数值与物品不回退。</p>
     </div>
     <div class="card">
-      <h2>背包物品</h2>
+      <h2>全部背包物品</h2>
+      <p id="trainer-capacity" class="note"></p>
       <p class="hint">直接修改当前背包，游戏正常存档时会保存。移除已装备的饰品／宝石会同时卸下；移除当前武器会换到另一件已有武器。新增宝石按游戏规则自动启用。</p>
       <div class="row">
         <input id="trainer-search" type="search" placeholder="搜索物品名称、描述或编号" aria-label="搜索背包物品">
-        <select id="trainer-category" aria-label="物品分类"><option value="">全部分类</option><option value="consumables">消耗品</option><option value="weapons">武器</option><option value="stones">宝石</option><option value="ornaments">饰品</option><option value="special">特殊材料</option></select>
+        <select id="trainer-category" aria-label="物品分类"><option value="">全部分类</option><option value="consumables">食物</option><option value="weapons">咸鱼（武器）</option><option value="stones">鱼眼宝石</option><option value="ornaments">配饰</option><option value="special">材料与铃铛</option></select>
         <label><input id="trainer-owned" type="checkbox">只看已拥有</label>
         <label><input id="trainer-overcap" type="checkbox">允许超过消耗品携带上限</label>
+        <label><input id="trainer-map-bells" type="checkbox">允许减少地图铃铛（会重置相应收集点）</label>
       </div>
+      <div class="row mt"><button id="trainer-give-filtered">获得筛选结果</button><button class="danger" id="trainer-clear-filtered">清除筛选结果</button><span id="trainer-item-summary" class="meta"></span></div>
+      <p class="hint">物品逐项添加／移除，配饰与宝石也可装备／卸下。批量获得会补满食物、添加装备及各 1 个材料／铃铛；批量清除保留当前武器。默认保留地图铃铛；勾选允许减少后，按地图编号从后往前重置对应铃铛收集点。其他物品的背包修改不影响地图收集记录。</p>
       <div id="trainer-items" class="list tall"><div class="empty">连接后读取背包</div></div>
     </div>
   </section>
-
 
   <!-- ========== 传送 ========== -->
   <section class="panel active" id="panel-teleport">
@@ -98,11 +129,7 @@
         播掉落音效并把你弹回"上次站立的位置"，如果这个记录还是上一张地图的，人就会直接消失。<br>
         想站到地上走动时，点下面的<b>「落地」</b>（会先探测脚下安不安全）。
       </div>
-      <div class="note warn-note">
-        ⚠️ <b>悬浮时别按跳跃键</b> —— 跳跃给了向上的速度，而重力是关掉的，
-        <b>没有任何力把它拉回来，人会一直往上飘</b>。<br>
-        想恢复正常走动：点 <b>「落地」</b>，或顶部 <b>「全部还原」</b>。
-      </div>
+      <div class="note">悬停时每次点跳都能继续上升；按住游戏「下」键下降，松开停住，遇到实心地面会停下。下冲等技能保留原有位移。开「穿墙」后四向均可穿过障碍；已卡进地里时先开穿墙飞到空处再关闭。支持原版出口换图并保留设置，无出口的边界仍会阻挡。方向微调点按小步移动，按住连续移动。</div>
 
       <div class="row mt">
         <label>X <input type="number" id="tp-x" min="0" step="1" value="0"></label>
@@ -113,6 +140,7 @@
       </div>
       <div class="row mt">
         <label>微调</label>
+        <select id="tp-step" aria-label="微调像素步长"><option value="1">精细 · 1 像素</option><option value="4" selected>普通 · 4 像素</option><option value="16">快速 · 16 像素</option></select>
         <button data-nudge="-1,0">←</button>
         <button data-nudge="1,0">→</button>
         <button data-nudge="0,-1">↑</button>
@@ -159,6 +187,24 @@
         <span class="pill" id="lost-hint">还没扫描</span>
       </div>
       <div class="list" id="lost-list"><div class="empty">点「扫描本图角色」看看本图现在有谁、缺谁</div></div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-encyclopedia">
+    <div class="card">
+      <h2>收集百科</h2>
+      <p class="hint">查看物品用途、获取位置和当前存档的收集状态。背包为空不代表没拿过；地图记录与当前持有数量独立显示。打开游戏背包时也能查百科。</p>
+      <p class="hint">「前往分块边缘」优先选择物品所属分块边缘附近、不碰墙且脚下无伤害地形的落点；这个分块被堵住时，会改找邻近分块或同图其他空处，继续传送。到达后保持悬停并恢复碰撞，不会自动穿墙。物品位置和获取条件照常，请自行走过去获取。</p>
+      <div class="row"><button id="encyclopedia-refresh" class="primary">刷新百科与收集进度</button><span id="encyclopedia-summary" role="status">连接后读取游戏资料</span></div>
+      <div id="encyclopedia-regions" class="collection-regions"></div>
+      <div class="row mt">
+        <input id="encyclopedia-search" type="search" placeholder="搜索物品、用途、区域或地图编号" aria-label="搜索百科">
+        <select id="encyclopedia-category" aria-label="百科物品分类"><option value="">全部分类</option><option value="consumables">食物</option><option value="weapons">咸鱼（武器）</option><option value="stones">鱼眼宝石</option><option value="ornaments">配饰</option><option value="special">材料与铃铛</option><option value="coin">金币</option></select>
+        <select id="encyclopedia-area" aria-label="百科区域"><option value="">全部区域</option></select>
+        <select id="encyclopedia-status" aria-label="百科状态"><option value="all">全部物品与地点</option><option value="uncollected">有明确未收集地点</option><option value="collected">有已收集地点</option><option value="unknown">有状态未知地点</option><option value="missing">背包未拥有</option><option value="owned">背包已拥有</option></select>
+      </div>
+      <p id="encyclopedia-coverage" class="hint"></p>
+      <div id="encyclopedia-items" class="catalog-list"><div class="empty">请先读档，再刷新百科。</div></div>
     </div>
   </section>
 

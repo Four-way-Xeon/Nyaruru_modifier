@@ -40,8 +40,10 @@ let EVENTS_CONTEXT = null;
 let LOST_CONTEXT = null;
 let STATUS_BUSY = false;
 let LAST_MAP = null;            // 上一次看到的地图号，用来检测换图
-
 let TRAINER = null, TRAINER_READING = false, TRAINER_WRITING = false, TRAINER_REVISION = 0;
+let ENCYCLOPEDIA = null, ENCYCLOPEDIA_BUSY = false, ENCYCLOPEDIA_REVISION = 0;
+let ITEM_ICONS = {}, ICON_CONTEXT = null, ICON_REQUEST = null;
+let COMBAT_CONTEXT=null;
 
 // ---------- 基础工具 ----------
 async function api(path, body) {
@@ -71,16 +73,36 @@ function esc(s) {
 
 // ---------- 角色与背包 ----------
 const STAT_NAMES = { coin: '金币', hp: '生命 HP', sp: '体力 SP', zp: '能量 ZP' };
-const ITEM_TYPES = { consumables: '消耗品', weapons: '武器', stones: '宝石', ornaments: '饰品', joycoin: '特殊材料', hpst: '特殊材料', skillst: '特殊材料' };
+const ITEM_TYPES = { consumables: '食物', weapons: '咸鱼（武器）', stones: '鱼眼宝石', ornaments: '配饰', joycoin: '材料与铃铛', hpst: '材料与铃铛', skillst: '材料与铃铛', bell: '材料与铃铛', coin: '金币' };
+// Gold has no inventory thumbnail; use a vector coin that stays sharp at map zoom levels.
+const COIN_ICON = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+    <circle cx="16" cy="17" r="14.2" fill="#92521b"/>
+    <circle cx="16" cy="15.5" r="14.2" fill="#e9a830" stroke="#794416" stroke-width="1.2"/>
+    <circle cx="16" cy="15.5" r="11.8" fill="#ffda69" stroke="#fff1a6" stroke-width="1.3"/>
+    <circle cx="16" cy="15.5" r="9.8" fill="none" stroke="#cc8b26" stroke-width=".7"/>
+    <g fill="#9b581b" stroke="#ffe994" stroke-width=".45">
+        <ellipse cx="10.2" cy="13.8" rx="1.5" ry="2.1" transform="rotate(-30 10.2 13.8)"/>
+        <ellipse cx="13.8" cy="10.9" rx="1.6" ry="2.2" transform="rotate(-12 13.8 10.9)"/>
+        <ellipse cx="18.2" cy="10.9" rx="1.6" ry="2.2" transform="rotate(12 18.2 10.9)"/>
+        <ellipse cx="21.8" cy="13.8" rx="1.5" ry="2.1" transform="rotate(30 21.8 13.8)"/>
+        <path d="M12.3 17.4C13.7 15.1 14.6 14.6 16 14.6S18.3 15.1 19.7 17.4C22.6 20.6 20.1 23 17.8 21.7Q16 20.8 14.2 21.7C11.9 23 9.4 20.6 12.3 17.4Z"/>
+    </g>
+</svg>`);
 function invalidateTrainer(message = '请先连接游戏并进入地图') {
     TRAINER = null; TRAINER_REVISION++;
+    ITEM_ICONS = {}; ICON_CONTEXT = null;
     $('#trainer-role').textContent = message;
     $('#trainer-stats').replaceChildren();
+    $('#trainer-capacity').textContent = '';
+    $('#trainer-item-summary').textContent = '';
     $('#trainer-items').innerHTML = `<div class="empty">${esc(message)}</div>`;
+    trainerDisabled();
 }
 function renderTrainer(resetInputs = false) {
     if (!TRAINER) return;
     $('#trainer-role').textContent = `当前操作角色：${TRAINER.role}`;
+    const capacity = TRAINER.capacity;
+    $('#trainer-capacity').textContent = capacity ? `配饰栏位：已用 ${capacity.used} / ${capacity.max}；地图铃铛 ${capacity.mapBells}，额外铃铛 ${capacity.extraBells}。调低容量会自动卸下超出的配饰。` : '';
     for (const [field, label] of Object.entries(STAT_NAMES)) {
         const stat = TRAINER.stats[field];
         let row = $('#trainer-stat-' + field);
@@ -104,19 +126,45 @@ function renderTrainer(resetInputs = false) {
 }
 function numericInput(input) { return input.value.trim() === '' ? null : Number(input.value); }
 function trainerDisabled() {
-    $$('#trainer-stats button, #trainer-stats input, #trainer-items button, #trainer-items input').forEach(el => { el.disabled = TRAINER_WRITING || !TRAINER; });
+    $$('#trainer-stats button, #trainer-stats input, #trainer-items button, #trainer-items input, #trainer-give-filtered, #trainer-clear-filtered').forEach(el => { el.disabled = TRAINER_WRITING || !TRAINER; });
     $('#trainer-refresh').disabled = TRAINER_WRITING || TRAINER_READING;
+}
+function filteredTrainerItems() {
+    if (!TRAINER) return [];
+    const query = $('#trainer-search').value.trim().toLowerCase(), category = $('#trainer-category').value;
+    return TRAINER.items.filter(item =>
+        (!category || category === item.type || (category === 'special' && ITEM_TYPES[item.type] === '材料与铃铛')) &&
+        (!$('#trainer-owned').checked || item.count > 0) && `${item.name} ${item.desc} ${item.id}`.toLowerCase().includes(query));
+}
+function itemArt(item) {
+    const key=item.type+':'+item.id, src=item.type==='coin'?COIN_ICON:ITEM_ICONS[key];
+    return `<span class="item-art" data-item-icon="${esc(key)}" role="img" aria-label="${esc(item.name)}图标">${src ? `<img src="${esc(src)}" alt="" width="64" height="64">` : '<span class="icon-placeholder" aria-hidden="true">·</span>'}</span>`;
+}
+async function loadItemIcons(force = false) {
+    const context = CURRENT_CONTEXT;
+    if (!context || (!force && ICON_CONTEXT === context) || ICON_REQUEST?.context === context) return;
+    const request={context}; ICON_REQUEST=request;
+    try {
+        const result=await api('/item-icons');
+        if (CURRENT_CONTEXT !== context || result.context !== context || ICON_REQUEST !== request) return;
+        ITEM_ICONS=Object.fromEntries(Object.entries(result.icons).filter(([,src])=>typeof src==='string' && src.startsWith('data:image/png;base64,')));
+        ICON_CONTEXT=context;
+        // Update thumbnails in place so a late image response cannot replace typed quantities.
+        $$('[data-item-icon]').forEach(el=>{const src=ITEM_ICONS[el.dataset.itemIcon]; if(src) el.innerHTML=`<img src="${esc(src)}" alt="" width="64" height="64">`;});
+        if (WORLD_MAP) renderWorldMap();
+    } catch(e) { if (CURRENT_CONTEXT===context) toast('物品图标暂时未加载：'+e.message,'err'); }
+    finally { if (ICON_REQUEST===request) ICON_REQUEST=null; }
 }
 function renderTrainerItems() {
     if (!TRAINER) return;
-    const query = $('#trainer-search').value.trim().toLowerCase(), category = $('#trainer-category').value;
-    const items = TRAINER.items.filter(item =>
-        (!category || category === item.type || (category === 'special' && ITEM_TYPES[item.type] === '特殊材料')) &&
-        (!$('#trainer-owned').checked || item.count > 0) && `${item.name} ${item.desc} ${item.id}`.toLowerCase().includes(query));
+    const items = filteredTrainerItems();
+    const adjustMapBells = $('#trainer-map-bells').checked;
+    $('#trainer-item-summary').textContent = `显示 ${items.length} / ${TRAINER.items.length} 项（含未拥有物品）`;
     $('#trainer-items').innerHTML = items.map(item => {
-        const counted = item.type === 'consumables' || ITEM_TYPES[item.type] === '特殊材料';
+        const counted = item.type === 'consumables' || ITEM_TYPES[item.type] === '材料与铃铛';
         const max = item.type === 'consumables' && $('#trainer-overcap').checked ? 99999 : item.max;
-        return `<div class="item" data-type="${item.type}" data-id="${item.id}"><div class="grow"><div class="name">${esc(item.name)} ${item.equipped ? '<span class="tag ok">已装备</span>' : ''}</div><div class="meta">${ITEM_TYPES[item.type]} #${item.id} · 已有 ${item.count}${counted ? ` · 上限 ${item.max}` : ''}</div><div class="meta">${esc(item.desc)}</div></div>${counted ? `<input type="number" min="0" max="${max}" step="1" value="${item.count}" aria-label="${esc(item.name)}数量"><button data-count>设置数量</button>` : `<button data-owned="${item.count ? 0 : 1}">${item.count ? '移除' : '添加'}</button>`}</div>`;
+        const equip = !counted && item.count && !(item.type === 'weapons' && item.equipped) ? `<button data-equip="${item.equipped ? '0' : '1'}">${item.equipped ? '卸下' : '装备'}</button>` : '';
+        return `<div class="item inventory-row ${item.count ? 'owned' : 'missing'}" data-type="${item.type}" data-id="${item.id}"><div class="inventory-main">${itemArt(item)}<div class="grow"><div class="name">${esc(item.name)} <span class="tag ${item.count ? 'ok' : ''}">${item.count ? '已拥有' : '未拥有'}</span> ${item.equipped ? '<span class="tag ok">已装备</span>' : ''}</div><div class="meta">${ITEM_TYPES[item.type]} #${item.id} · 已有 ${item.count}${counted ? ` · 上限 ${item.max}` : ''}</div><div class="meta item-description">${esc(item.desc)}</div></div></div><div class="item-actions">${counted ? `<input type="number" min="${item.type==='bell'&&adjustMapBells ? 0 : item.min || 0}" max="${max}" step="1" value="${item.count}" aria-label="${esc(item.name)}数量"><button data-count>设置数量</button><button data-add>加 1</button><button data-remove>${item.type === 'bell' && !adjustMapBells ? '清除额外铃铛' : '清空'}</button>` : `<button data-owned="${item.count ? 0 : 1}">${item.count ? '移除' : '添加'}</button>${equip}`}</div></div>`;
     }).join('') || '<div class="empty">没有匹配物品</div>';
     trainerDisabled();
 }
@@ -129,6 +177,7 @@ async function loadTrainer(resetInputs = false) {
         if (revision !== TRAINER_REVISION || context !== CURRENT_CONTEXT || result.context !== context) return;
         const changed = TRAINER?.subject !== result.subject;
         TRAINER = result; renderTrainer(resetInputs || changed);
+        loadItemIcons();
     } catch (e) {
         if (revision === TRAINER_REVISION) invalidateTrainer('读取失败：' + e.message);
     } finally { TRAINER_READING = false; trainerDisabled(); }
@@ -141,19 +190,283 @@ async function changeTrainer(body) {
         const result = await api('/trainer', { ...body, context, subject });
         if (revision !== TRAINER_REVISION || CURRENT_CONTEXT !== context) return;
         TRAINER = result; renderTrainer(true);
+        invalidateEncyclopedia('背包已修改，请刷新百科以更新数量');
         toast(body.locked === false ? '已解除锁定' : '已修改', 'ok');
     } catch (e) { toast(e.message, 'err'); }
     finally { TRAINER_WRITING = false; trainerDisabled(); }
 }
-$('#trainer-refresh').onclick = () => loadTrainer(true);
+$('#trainer-refresh').onclick = () => { loadTrainer(true); loadItemIcons(true); };
 $('#trainer-search').oninput = renderTrainerItems;
-['trainer-category', 'trainer-owned', 'trainer-overcap'].forEach(id => { $('#' + id).onchange = renderTrainerItems; });
+['trainer-category', 'trainer-owned', 'trainer-overcap', 'trainer-map-bells'].forEach(id => { $('#' + id).onchange = renderTrainerItems; });
 $('#trainer-items').onclick = ev => {
     const button = ev.target.closest('button');
     if (!button) return;
     const row = button.closest('[data-type]');
+    const item = TRAINER?.items.find(i => i.type === row.dataset.type && i.id === Number(row.dataset.id));
+    if (!item) return;
+    if (button.hasAttribute('data-equip')) return changeTrainer({action:'equip',type:item.type,id:item.id,equipped:button.dataset.equip === '1'});
+    const max = item.type === 'consumables' && $('#trainer-overcap').checked ? 99999 : item.max;
+    const adjustMapBells = $('#trainer-map-bells').checked;
     changeTrainer({ action: 'item', type: row.dataset.type, id: Number(row.dataset.id),
-        count: button.hasAttribute('data-count') ? numericInput(row.querySelector('input')) : Number(button.dataset.owned), overCap: $('#trainer-overcap').checked });
+        count: button.hasAttribute('data-count') ? numericInput(row.querySelector('input')) : button.hasAttribute('data-add') ? Math.min(max, item.count + 1) : button.hasAttribute('data-remove') ? (item.type==='bell'&&adjustMapBells ? 0 : item.min || 0) : Number(button.dataset.owned), overCap: $('#trainer-overcap').checked, adjustMapBells });
+};
+async function batchTrainer(remove) {
+    if (!TRAINER || TRAINER_WRITING) return;
+    const adjustMapBells = $('#trainer-map-bells').checked;
+    const changes = filteredTrainerItems().filter(i => !(remove && i.type === 'weapons' && i.equipped)).map(i => ({ type:i.type, id:i.id,
+        count: remove ? (i.type==='bell'&&adjustMapBells ? 0 : i.min || 0) : i.type === 'consumables' ? Math.max(i.count, i.max) : ['weapons','stones','ornaments'].includes(i.type) ? 1 : Math.min(i.max, i.count + 1), overCap: i.count > i.max, adjustMapBells }));
+    if (!changes.length) return toast('没有可修改的筛选结果');
+    if (!confirm(`${remove ? '清除' : '获得'}当前筛选的 ${changes.length} 项物品？${remove ? '保留当前武器，移除的装备会卸下。' + (adjustMapBells ? '已允许重置地图铃铛收集点。' : '保留地图铃铛记录。') : '食物补满，装备添加，各材料与铃铛加 1。'}游戏存档会保留修改结果。`)) return;
+    await changeTrainer({action:'batch',changes});
+}
+$('#trainer-give-filtered').onclick = () => batchTrainer(false);
+$('#trainer-clear-filtered').onclick = () => batchTrainer(true);
+
+// ---------- 战斗 ----------
+async function loadCombat(reset=false){
+    if(!CURRENT_CONTEXT)return;const context=CURRENT_CONTEXT;
+    try{const r=await api('/combat');if(context!==CURRENT_CONTEXT||r.context!==context)return;
+        if(reset||COMBAT_CONTEXT!==context){$('#combat-outgoing').value=r.outgoing;$('#combat-incoming').value=r.incoming;COMBAT_CONTEXT=context;}
+        $('#combat-onehit').checked=r.oneHit;$('#combat-status').textContent=`当前：伤害 ${r.outgoing} 倍 · 受击 ${r.incoming} 倍 · ${r.oneHit?'一击秒杀开启':'秒杀关闭'}。作用于玩家与莉莉娅；不突破剧情无敌，受击 0 倍仍可能有击退。`;
+    }catch(e){$('#combat-status').textContent=e.message;}
+}
+async function changeCombat(body){try{await api('/combat',body);await loadCombat(true);toast('战斗设置已更新','ok');}catch(e){toast(e.message,'err');}}
+$('#combat-apply').onclick=()=>changeCombat({outgoing:numericInput($('#combat-outgoing')),incoming:numericInput($('#combat-incoming'))});
+$('#combat-onehit').onchange=()=>changeCombat({oneHit:$('#combat-onehit').checked});
+$('#combat-reset').onclick=()=>changeCombat({outgoing:1,incoming:1,oneHit:false});
+// ---------- 世界地图 ----------
+let WORLD_MAP = null, WORLD_MAP_REQUEST = null, WORLD_MAP_REVISION = 0, WORLD_MAP_TRAVELLING = false;
+let WORLD_MAP_SELECTED = null, WORLD_MAP_MARKER = null, WORLD_MAP_VIEW = {x:0,y:0,scale:1}, WORLD_MAP_FITTED = false;
+const WORLD_MAP_SIZE = 52;
+function worldMapState(markers) {
+    const missing=markers.filter(m=>m.collected===false).length, collected=markers.filter(m=>m.collected===true).length;
+    return {missing,collected,unknown:markers.length-missing-collected,allCollected:markers.length>0&&collected===markers.length};
+}
+function worldMapStatus(marker) { return marker.collected===true?'已收集':marker.collected===false?'未收集':'状态未知（脚本条件）'; }
+function worldMapConditions(marker) {
+    return (marker.conditions||[]).map(c=>typeof c==='string'?c:`${c.met===true?'✓':c.met===false?'✕':'?'} ${c.label||'未说明的条件'}`)
+        .concat(marker.branch?['位于条件分支，需满足剧情条件']:[])
+        .concat(marker.sourceNote?[marker.sourceNote]:[]).join('；');
+}
+function worldMapHTML(selector,html) {
+    const node=$(selector); if(node._worldHTML===html)return;
+    const scroll=node.scrollTop; node.innerHTML=html; node._worldHTML=html; node.scrollTop=scroll;
+}
+function invalidateWorldMap(message='地图或存档变化，正在更新地图…') {
+    WORLD_MAP=null; WORLD_MAP_REVISION++; WORLD_MAP_REQUEST=null; WORLD_MAP_SELECTED=null; WORLD_MAP_MARKER=null;
+    worldMapHTML('#world-map-drawing',''); $('#world-map-summary').textContent=message;
+    $('#world-map-empty').textContent=message; $('#world-map-empty').hidden=false;
+    worldMapHTML('#world-map-detail','<p class="hint">点击地图上的方格或收集图标查看详情。</p>');
+}
+async function loadWorldMap() {
+    if (!CURRENT_CONTEXT || WORLD_MAP_REQUEST) return;
+    const request={context:CURRENT_CONTEXT,revision:WORLD_MAP_REVISION}; WORLD_MAP_REQUEST=request;
+    try {
+        const result=await api('/world-map');
+        if(WORLD_MAP_REQUEST!==request || request.context!==CURRENT_CONTEXT || request.revision!==WORLD_MAP_REVISION || result.context!==CURRENT_CONTEXT)return;
+        WORLD_MAP=result;
+        const region=$('#world-map-region').value, type=$('#world-map-type').value;
+        $('#world-map-region').innerHTML='<option value="">全部区域</option>'+result.regions.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
+        $('#world-map-region').value=result.regions.some(r=>String(r.id)===region)?region:'';
+        const types=[...new Set(result.markers.map(m=>m.type))];
+        $('#world-map-type').innerHTML='<option value="">全部类型</option>'+types.map(t=>`<option value="${esc(t)}">${esc(ITEM_TYPES[t]||t)}</option>`).join('');
+        $('#world-map-type').value=types.includes(type)?type:'';
+        worldMapPages(); renderWorldMap(); if(!WORLD_MAP_FITTED)fitWorldMap(); loadItemIcons();
+    } catch(e) { if(WORLD_MAP_REQUEST===request){$('#world-map-summary').textContent='地图读取失败：'+e.message;} }
+    finally { if(WORLD_MAP_REQUEST===request)WORLD_MAP_REQUEST=null; }
+}
+function worldMapPages() {
+    if(!WORLD_MAP)return;
+    const region=$('#world-map-region').value, old=$('#world-map-page').value;
+    const pages=WORLD_MAP.pages.filter(p=>WORLD_MAP.cells.some(c=>String(c.page)===String(p.id)&&(!region||String(c.regionId)===region)));
+    $('#world-map-page').innerHTML=pages.map(p=>`<option value="${esc(p.id)}">${esc(p.label||p.name||('地图页 '+p.id))}</option>`).join('');
+    const player=String(WORLD_MAP.player?.page);
+    $('#world-map-page').value=pages.some(p=>String(p.id)===old)?old:pages.some(p=>String(p.id)===player)?player:String(pages[0]?.id??'');
+}
+function worldMapCells() {
+    if(!WORLD_MAP)return[];
+    const page=$('#world-map-page').value, region=$('#world-map-region').value;
+    return WORLD_MAP.cells.filter(c=>String(c.page)===page&&(!region||String(c.regionId)===region));
+}
+function worldMapMarkers(cellKey) {
+    const type=$('#world-map-type').value, missing=$('#world-map-missing').checked;
+    return (WORLD_MAP?.markers||[]).filter(m=>m.cellKey===cellKey&&(!type||m.type===type)&&(!missing||m.collected===false));
+}
+function renderWorldMap() {
+    if(!WORLD_MAP)return;
+    const cells=worldMapCells(), size=WORLD_MAP_SIZE;
+    const byPosition=new Map(cells.map(c=>[`${c.x}:${c.y}`,c]));
+    let shown=0;
+    worldMapHTML('#world-map-drawing',cells.map(c=>{
+        const markers=worldMapMarkers(c.key); shown+=markers.length;
+        const x=c.x*size,y=c.y*size;
+        const title=`${c.mapName||'房间 '+c.mapId} · 分块 (${c.x}, ${c.y}) · ${c.explored?'已探索':'未探索'}${c.hidden?' · 隐藏区域':''}`;
+        const edges=[['left',-1,0,0,0,0,size],['top',0,-1,0,0,size,0],['right',1,0,size,0,size,size],['bottom',0,1,0,size,size,size]];
+        const lines=edges.map(([side,dx,dy,x1,y1,x2,y2])=>{
+            const neighbor=byPosition.get(`${c.x+dx}:${c.y+dy}`);
+            if(neighbor&&neighbor.mapId===c.mapId)return '';
+            const open=c.walls?.[side]===false||!!c.exits?.[side];
+            // Door gaps preserve the original room outline without joining unrelated pages.
+            if(open) {
+                const ax=x1+(x2-x1)*.3,ay=y1+(y2-y1)*.3,bx=x1+(x2-x1)*.7,by=y1+(y2-y1)*.7;
+                return `<path class="world-wall" d="M${x1},${y1} L${ax},${ay} M${bx},${by} L${x2},${y2}"/>`;
+            }
+            return `<path class="world-wall" d="M${x1},${y1} L${x2},${y2}"/>`;
+        }).join('');
+        const art=markers.map((m,i)=>{
+            const mx=markers.length===1?14:5+(i%2)*23,my=markers.length<=2?14:5+Math.floor(i/2)*23;
+            const src=m.type==='coin'?COIN_ICON:ITEM_ICONS[m.iconKey||m.type+':'+m.id];
+            return `<g data-world-marker="${esc(m.key)}" class="world-marker ${m.collected===true?'collected':''}" transform="translate(${mx},${my})"><title>${esc(m.name)} · ${worldMapStatus(m)}\n${esc(m.desc)}</title><rect width="22" height="22" rx="4"/>${src?`<image href="${esc(src)}" width="22" height="22"/>`:`<text x="11" y="16">${esc((ITEM_TYPES[m.type]||m.type||'物').slice(0,1))}</text>`}${m.collected!==false?`<text class="world-marker-state" x="19" y="8">${m.collected===true?'✓':'?'}</text>`:''}</g>`;
+        }).join('');
+        return `<g data-world-cell="${esc(c.key)}" transform="translate(${x},${y})" class="world-cell ${c.explored?'':'unexplored'} ${c.key===WORLD_MAP.player?.cellKey?'current':''} ${c.key===WORLD_MAP_SELECTED?'selected':''}"><title>${esc(title)}</title><rect class="world-floor" width="${size}" height="${size}"/>${lines}<rect class="world-cell-outline" x="2" y="2" width="48" height="48"/>${art}${c.key===WORLD_MAP.player?.cellKey?'<circle class="world-player" cx="44" cy="44" r="5"/>':''}</g>`;
+    }).join(''));
+    $('#world-map-empty').hidden=!!cells.length; $('#world-map-empty').textContent='该区域在本地图页没有分块';
+    $('#world-map-summary').textContent=`${cells.length} 个分块 · ${shown} 个收集点 · ${Math.round(WORLD_MAP_VIEW.scale*100)}%`;
+    const coverage=WORLD_MAP.coverage;
+    $('#world-map-coverage').textContent=typeof coverage==='string'?coverage:coverage?.message||'包含未探索分块；未知收集状态请查看详情条件。';
+    applyWorldMapView(); renderWorldMapDetail();
+}
+function applyWorldMapView() {
+    const v=WORLD_MAP_VIEW;
+    $('#world-map-drawing').setAttribute('transform',`translate(${v.x},${v.y}) scale(${v.scale})`);
+}
+function fitWorldMap() {
+    const cells=worldMapCells(); if(!cells.length)return;
+    const box=$('#world-map-viewport'), minX=Math.min(...cells.map(c=>c.x))*WORLD_MAP_SIZE,minY=Math.min(...cells.map(c=>c.y))*WORLD_MAP_SIZE;
+    const width=(Math.max(...cells.map(c=>c.x))*WORLD_MAP_SIZE-minX+WORLD_MAP_SIZE),height=(Math.max(...cells.map(c=>c.y))*WORLD_MAP_SIZE-minY+WORLD_MAP_SIZE);
+    const scale=Math.max(.12,Math.min(2,(box.clientWidth-36)/width,(box.clientHeight-36)/height));
+    WORLD_MAP_VIEW={scale,x:(box.clientWidth-width*scale)/2-minX*scale,y:(box.clientHeight-height*scale)/2-minY*scale};
+    WORLD_MAP_FITTED=true; renderWorldMap();
+}
+function zoomWorldMap(factor,x,y) {
+    const box=$('#world-map-viewport'),v=WORLD_MAP_VIEW;
+    x??=box.clientWidth/2; y??=box.clientHeight/2;
+    const scale=Math.min(4,Math.max(.12,v.scale*factor)),ratio=scale/v.scale;
+    WORLD_MAP_VIEW={scale,x:x-(x-v.x)*ratio,y:y-(y-v.y)*ratio};renderWorldMap();
+}
+function renderWorldMapDetail() {
+    const cell=WORLD_MAP?.cells.find(c=>c.key===WORLD_MAP_SELECTED);
+    if(!cell){worldMapHTML('#world-map-detail','<p class="hint">点击地图上的方格或收集图标查看详情。</p>');return;}
+    const markers=WORLD_MAP.markers.filter(m=>m.cellKey===cell.key), state=worldMapState(markers);
+    worldMapHTML('#world-map-detail',`<h3>${esc(cell.mapName||'房间 '+cell.mapId)}</h3><p class="meta">地图 #${cell.mapId} · 分块 (${cell.x}, ${cell.y})<br>${cell.explored?'已探索':'未探索'}${cell.hidden?' · 隐藏区域':''}</p><button id="world-map-travel" class="primary" ${WORLD_MAP_TRAVELLING?'disabled':''}>${WORLD_MAP_TRAVELLING?'传送中…':'传送到此分块'}</button><p class="hint">目标分块附近选择空处，抵达后悬停并开启碰撞。请先关闭游戏菜单回到地图。</p><p class="meta">未收集 ${state.missing} · 已收集 ${state.collected} · 未知 ${state.unknown}</p>${markers.map(m=>`<article class="world-detail-item ${m.key===WORLD_MAP_MARKER?'focused':''}"><div class="inventory-main">${itemArt(m)}<b>${esc(m.name||ITEM_TYPES[m.type]||m.type)}</b></div><span class="tag ${m.collected===true?'':'common'}">${worldMapStatus(m)}</span>${!m.official?'<span class="tag">额外脚本点</span>':''}<p>${esc(m.desc||'暂无用途说明')}</p>${worldMapConditions(m)?`<p class="meta">条件与来源：${esc(worldMapConditions(m))}</p>`:''}</article>`).join('')||'<p class="hint">此分块没有已知收集点。</p>'}`);
+    $('#world-map-travel').onclick=()=>travelWorldMap(cell.key);
+}
+async function travelWorldMap(key) {
+    if(!WORLD_MAP||WORLD_MAP_TRAVELLING)return;
+    if(WORLD_MAP.context!==CURRENT_CONTEXT)return toast('地图或存档已变化，请刷新地图','err');
+    if(!CURRENT_GAME?.inMap)return toast('请先关闭游戏菜单回到地图，再传送','err');
+    const cell=WORLD_MAP.cells.find(c=>c.key===key); if(!cell)return;
+    const context=WORLD_MAP.context; WORLD_MAP_TRAVELLING=true; renderWorldMapDetail();
+    try {const result=await api('/world-map/travel',{context,mapId:cell.mapId,cellX:cell.x,cellY:cell.y,page:cell.page});toast(result.positionNote||'已传送到目标分块附近，悬停中，碰撞已恢复','ok');await refreshStatus();}
+    catch(e){toast(e.message,'err');}finally{WORLD_MAP_TRAVELLING=false;renderWorldMapDetail();}
+}
+$('#world-map-refresh').onclick=()=>loadWorldMap();
+$('#world-map-region').onchange=()=>{WORLD_MAP_SELECTED=null;WORLD_MAP_MARKER=null;worldMapPages();fitWorldMap();};
+$('#world-map-page').onchange=()=>{WORLD_MAP_SELECTED=null;WORLD_MAP_MARKER=null;fitWorldMap();};
+$('#world-map-type').onchange=renderWorldMap; $('#world-map-missing').onchange=renderWorldMap;
+$('#world-map-fit').onclick=fitWorldMap;
+$('#world-map-plus').onclick=()=>zoomWorldMap(1.25); $('#world-map-minus').onclick=()=>zoomWorldMap(.8);
+$('#world-map-locate').onclick=()=>{
+    if(!WORLD_MAP?.player?.cellKey)return toast('当前房间不在原版地图布局中');
+    const cell=WORLD_MAP.cells.find(c=>c.key===WORLD_MAP.player.cellKey); if(!cell)return;
+    $('#world-map-region').value=String(cell.regionId);worldMapPages();$('#world-map-page').value=String(cell.page);
+    WORLD_MAP_SELECTED=cell.key;WORLD_MAP_MARKER=null;fitWorldMap();
+};
+let WORLD_MAP_DRAG=null;
+$('#world-map-viewport').onpointerdown=e=>{
+    if(e.button!==0)return;
+    WORLD_MAP_DRAG={id:e.pointerId,x:e.clientX,y:e.clientY,vx:WORLD_MAP_VIEW.x,vy:WORLD_MAP_VIEW.y,moved:false,target:e.target};
+    e.currentTarget.setPointerCapture(e.pointerId);
+};
+$('#world-map-viewport').onpointermove=e=>{
+    const drag=WORLD_MAP_DRAG;if(!drag||drag.id!==e.pointerId)return;
+    const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(dx,dy)>5)drag.moved=true;
+    if(drag.moved){WORLD_MAP_VIEW.x=drag.vx+dx;WORLD_MAP_VIEW.y=drag.vy+dy;applyWorldMapView();}
+};
+$('#world-map-viewport').onpointerup=e=>{
+    const drag=WORLD_MAP_DRAG;WORLD_MAP_DRAG=null;if(!drag||drag.moved)return;
+    const cell=drag.target.closest('[data-world-cell]'); if(!cell)return;
+    WORLD_MAP_SELECTED=cell.dataset.worldCell;WORLD_MAP_MARKER=drag.target.closest('[data-world-marker]')?.dataset.worldMarker||null;renderWorldMap();
+};
+$('#world-map-viewport').onpointercancel=()=>{WORLD_MAP_DRAG=null;};
+$('#world-map-viewport').addEventListener('wheel',e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();zoomWorldMap(e.deltaY<0?1.15:1/1.15,e.clientX-r.left,e.clientY-r.top);},{passive:false});
+$('#world-map-viewport').onkeydown=e=>{
+    if(e.key==='+'||e.key==='='){e.preventDefault();zoomWorldMap(1.25);}else if(e.key==='-'){e.preventDefault();zoomWorldMap(.8);}
+    else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();WORLD_MAP_VIEW.x+=e.key==='ArrowLeft'?40:e.key==='ArrowRight'?-40:0;WORLD_MAP_VIEW.y+=e.key==='ArrowUp'?40:e.key==='ArrowDown'?-40:0;applyWorldMapView();}
+};
+
+// ---------- 收集百科 ----------
+function invalidateEncyclopedia(message = '请刷新百科') {
+    ENCYCLOPEDIA = null; ENCYCLOPEDIA_REVISION++;
+    $('#encyclopedia-summary').textContent = message;
+    $('#encyclopedia-regions').replaceChildren();
+    $('#encyclopedia-items').innerHTML = `<div class="empty">${esc(message)}</div>`;
+    $('#encyclopedia-coverage').textContent = '';
+}
+async function loadEncyclopedia() {
+    if (ENCYCLOPEDIA_BUSY || !CURRENT_CONTEXT) return;
+    const context = CURRENT_CONTEXT, revision = ENCYCLOPEDIA_REVISION;
+    ENCYCLOPEDIA_BUSY = true; $('#encyclopedia-refresh').disabled = true;
+    $('#encyclopedia-summary').textContent = '正在读取物品与地图收集记录…';
+    try {
+        const result = await api('/encyclopedia');
+        if (revision !== ENCYCLOPEDIA_REVISION || context !== CURRENT_CONTEXT || result.context !== context) return;
+        ENCYCLOPEDIA = result;
+        const area = $('#encyclopedia-area'), previous = area.value;
+        const areas = [...new Set(result.locations.map(l => l.area).concat(result.shops.map(l => l.area)))].sort((a,b) => a.localeCompare(b,'zh-CN'));
+        area.innerHTML = '<option value="">全部区域</option>' + areas.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
+        if (areas.includes(previous)) area.value = previous;
+        $('#encyclopedia-summary').textContent = `${result.stats.items} 种物品 · ${result.stats.locations} 条地图来源 · 地图收集 ${result.stats.collected} / ${result.stats.total} · ${result.stats.shops} 处商店入口`;
+        $('#encyclopedia-coverage').textContent = result.coverage;
+        $('#encyclopedia-regions').innerHTML = result.regions.map(r => `<button class="collection-region" data-area="${esc(r.area)}"><b>${esc(r.area)}</b><span>已收集 ${r.collected} / ${r.total} · 剩余 ${r.total-r.collected}</span><progress max="${r.total}" value="${r.collected}"></progress></button>`).join('');
+        renderEncyclopedia();
+    } catch(e) {
+        if (revision === ENCYCLOPEDIA_REVISION) invalidateEncyclopedia('读取失败：' + e.message);
+    } finally { ENCYCLOPEDIA_BUSY = false; $('#encyclopedia-refresh').disabled = false; }
+}
+function renderEncyclopedia() {
+    if (!ENCYCLOPEDIA) return;
+    const query = $('#encyclopedia-search').value.trim().toLowerCase(), type = $('#encyclopedia-category').value;
+    const area = $('#encyclopedia-area').value, status = $('#encyclopedia-status').value;
+    const matchStatus = l => status === 'uncollected' ? l.collected === false : status === 'collected' ? l.collected === true : status === 'unknown' ? l.collected === null : true;
+    const rows = [];
+    for (const item of ENCYCLOPEDIA.items) {
+        if (type && type !== item.type && !(type === 'special' && ITEM_TYPES[item.type] === '材料与铃铛')) continue;
+        if ((status === 'owned' && item.count <= 0) || (status === 'missing' && item.count > 0)) continue;
+        const textMatch = `${item.name} ${item.desc} ${item.id}`.toLowerCase().includes(query);
+        const locations = item.locations.filter(l => (!area || l.area === area) && matchStatus(l) && (textMatch || `${l.area} ${l.mapName} ${l.mapId} ${l.eventName}`.toLowerCase().includes(query)));
+        if (['uncollected','collected','unknown'].includes(status) && !locations.length) continue;
+        const shopMatches = item.shopCandidate ? ENCYCLOPEDIA.shops.filter(l => (!area || l.area === area) && (textMatch || `${l.area} ${l.mapName} ${l.mapId}`.toLowerCase().includes(query))) : [];
+        if (area && !locations.length && !shopMatches.length) continue;
+        if (!textMatch && !locations.length && !shopMatches.length) continue;
+        const got = item.locations.filter(l => l.collected === true).length, missed = item.locations.filter(l => l.collected === false).length;
+        const locationHTML = locations.map(l => {
+            const label = l.collected === true ? '地图已收集' : l.collected === false ? '地图未收集' : '收集状态未知';
+            const conditions = l.conditions.map(c => `${c.met === true ? '✓' : c.met === false ? '✕' : '?'} ${c.label}`).concat(l.branch ? ['位于条件分支，需满足剧情条件'] : []).concat(l.sourceNote ? [l.sourceNote] : []);
+            return `<div class="catalog-location"><div class="grow"><span class="tag ${l.collected === true ? 'ok' : l.collected === false ? 'warn' : ''}">${label}</span> <b>${esc(l.area)}</b> · ${esc(l.mapName)} (#${l.mapId})<div class="meta">事件 ${l.eventId} · 第 ${l.pageIndex+1} 页 · 坐标 (${l.x}, ${l.y})${l.amount > 1 ? ` · 数量 ${l.amount}` : ''}${l.official ? ' · 计入地图收集率' : ''}</div>${conditions.length ? `<div class="meta">${esc(conditions.join('；'))}</div>` : ''}</div><button data-location="${esc(l.key)}" title="前往目标分块边缘附近的空处，保持悬停和碰撞">前往分块边缘</button></div>`;
+        }).join('');
+        const shopHTML = item.shopCandidate && !['uncollected','collected','unknown'].includes(status) ? `<details class="shop-sources"><summary>商店候选 · 基础价格 ${item.price} 金币 · ${shopMatches.length} 处入口</summary><p class="hint">是否售卖受任务及购买进度影响，请到店确认。此处列的是商店入口，不代表每家店当前都有库存。</p>${shopMatches.map(l => `<div class="catalog-location"><span class="grow">${esc(l.area)} · ${esc(l.mapName)} (#${l.mapId}) · (${l.x}, ${l.y})</span><button data-shop="${ENCYCLOPEDIA.shops.indexOf(l)}">前往商店附近</button></div>`).join('')}</details>` : '';
+        rows.push(`<details class="catalog-item" ${query || status === 'uncollected' || status === 'unknown' ? 'open' : ''}><summary><span class="catalog-title">${esc(item.name)} <span class="tag">${ITEM_TYPES[item.type]}</span></span><span class="meta">当前 ${item.count > 0 ? `拥有 ${item.count}` : '未拥有'} · 地图已收集 ${got} / 未收集 ${missed} · ${item.locations.length} 条来源</span></summary><div class="catalog-content"><p>${esc(item.desc)}</p>${locationHTML || '<p class="hint">当前筛选下没有已定位的地图来源。</p>'}${shopHTML}</div></details>`);
+    }
+    $('#encyclopedia-items').innerHTML = rows.join('') || '<div class="empty">没有符合筛选条件的物品或地点。</div>';
+}
+async function goCatalogLocation(location) {
+    if (!location || !ENCYCLOPEDIA || ENCYCLOPEDIA.context !== CURRENT_CONTEXT) return toast('请刷新百科后重试', 'err');
+    if (!CURRENT_GAME?.inMap) return toast('请先关闭游戏菜单，回到地图后再前往', 'err');
+    try {
+        const result = await api('/encyclopedia/travel', {mapId:location.mapId,eventId:location.eventId});
+        toast(`已到 ${location.mapName} (#${location.mapId}) 的${result.positionNote||'目标分块空处'}，保持悬停，碰撞已恢复；物品请自行前往获取。`, 'ok');
+        refreshStatus();
+    } catch(e) { toast(e.message, 'err'); }
+}
+$('#encyclopedia-refresh').onclick = loadEncyclopedia;
+$('#encyclopedia-search').oninput = renderEncyclopedia;
+['encyclopedia-category','encyclopedia-area','encyclopedia-status'].forEach(id => { $('#' + id).onchange = renderEncyclopedia; });
+$('#encyclopedia-regions').onclick = ev => { const button=ev.target.closest('[data-area]'); if (button) { $('#encyclopedia-area').value=button.dataset.area; $('#encyclopedia-status').value='uncollected'; renderEncyclopedia(); } };
+$('#encyclopedia-items').onclick = ev => {
+    const button=ev.target.closest('button'); if (!button || !ENCYCLOPEDIA) return;
+    if (button.hasAttribute('data-location')) return goCatalogLocation(ENCYCLOPEDIA.locations.find(l => l.key === button.dataset.location));
+    else if (button.hasAttribute('data-shop')) return goCatalogLocation(ENCYCLOPEDIA.shops[Number(button.dataset.shop)]);
 };
 
 // ---------- 标签页 ----------
@@ -162,6 +475,9 @@ $$('.tab').forEach(tab => {
         $$('.tab').forEach(t => t.classList.toggle('active', t === tab));
         $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab.dataset.panel));
         if (tab.dataset.panel === 'trainer') loadTrainer();
+        if (tab.dataset.panel === 'trainer') loadCombat();
+        if (tab.dataset.panel === 'encyclopedia' && !ENCYCLOPEDIA) loadEncyclopedia();
+        if (tab.dataset.panel === 'world-map') loadWorldMap();
     };
 });
 
@@ -172,7 +488,7 @@ $$('.tab').forEach(tab => {
  *
  * 背景：沙盒和原版默认共用同一个调试端口，面板光看"已连接"分不出对面是谁。
  * 用户以为在沙盒里操作、实际改的是原版存档，是这套工具最危险的误用方式
- * （见 复查与隐患.md 坑 5）。这一格是最后一道兜底。
+ * （见 tool/开发文档.md 的运行结构与配置）。这一格用于核对实际实例。
  *
  * 判断由服务端做（它有 gameDir 和 sandboxDir 两个路径可以比对），
  * 前端只负责显示，免得两边各写一套判断逻辑。
@@ -215,12 +531,15 @@ async function refreshStatus() {
         $('#connText').textContent = s.connected ? (s.gameSelf?.inMap ? `已连接游戏（端口 ${s.cdpPort}）` : '已连接，请在游戏里读档进入地图') : (s.gameRunning ? '调试端口可达，但连接未建立' : '未检测到游戏 — 请先启动游戏');
         renderGameSrc(s);
         applyStoryState(s.storyText || { state: 'disconnected', loaded: false, connection: null });
-        const nextContext = s.connected && s.gameSelf?.inMap ? s.context : null;
+        const nextContext = s.connected && (s.gameSelf?.inMap || s.gameSelf?.inMenu) ? s.context : null;
         CURRENT_GAME = s.gameSelf;
         if (CURRENT_CONTEXT !== nextContext) {
             CURRENT_CONTEXT = nextContext;
             EVENTS_CONTEXT = LOST_CONTEXT = null;
             invalidateTrainer(nextContext ? '正在读取角色与背包…' : '请先连接游戏并进入地图');
+            COMBAT_CONTEXT=null;
+            invalidateEncyclopedia(nextContext ? '地图或存档变化，请刷新百科' : '请先连接游戏并读档');
+            invalidateWorldMap(nextContext ? '地图或存档变化，正在更新地图…' : '请先连接游戏并读档');
             EVENTS = []; LOST = []; VISIBLE = [];
             renderEvents(); renderLost();
             if (TRIGGERS.length) loadTriggers();
@@ -228,15 +547,19 @@ async function refreshStatus() {
         const where = $('#photo-target');
         if (where) where.textContent = s.gameSelf?.saveDir || '未连接游戏，不能保存';
 
-        if (s.connected && s.gameSelf?.inMap) {
+        if (s.connected && (s.gameSelf?.inMap || s.gameSelf?.inMenu)) {
             if ($('#panel-trainer').classList.contains('active')) loadTrainer();
+            if ($('#panel-trainer').classList.contains('active')) loadCombat();
+            if ($('#panel-encyclopedia').classList.contains('active') && !ENCYCLOPEDIA) loadEncyclopedia();
+            if ($('#panel-world-map').classList.contains('active')) loadWorldMap();
+            if (!s.gameSelf.inMap) $('#connText').textContent = '已连接（游戏菜单中，可管理背包及查看百科）';
             try {
                 const snap = await api('/snapshot');
                 $('#st-map').textContent = `${snap.mapId} ${snap.mapName}`.trim();
                 $('#st-pos').textContent = `(${snap.x}, ${snap.y})`;
                 $('#st-hp').textContent = snap.hp ?? '—';
                 $('#st-sw').textContent = snap.switchesOn ?? '—';
-                $('#st-grav').textContent = snap.gravitySuspended ? '已关' : '正常';
+                $('#st-grav').textContent = snap.gravitySuspended ? '悬停' : '正常';
                 $('#st-inv').textContent = snap.invincible ? '已开' : '关';
 
                 // 换地图了 → 重新拉一次跳转点，好把新地图的"已抹除"状态标出来
@@ -247,7 +570,7 @@ async function refreshStatus() {
                 }
                 $('#photo-state').textContent = snap.stagedActors ? `摆拍角色 ${snap.stagedActors} 个：存档照常；不推荐此时保存，读档后摆拍状态可能无法完整恢复` : '';
                 // 顶部常驻开关：高亮 = 这个开关是"开着/显示着"的
-                $('#q-gravity').classList.toggle('on', !snap.gravitySuspended);  // 高亮=重力正常
+                $('#q-gravity').classList.toggle('on', !!snap.gravitySuspended);
                 $('#q-invincible').classList.toggle('on', !!snap.invincible);
                 $('#q-noclip').classList.toggle('on', !!snap.noclip);
                 if (snap.lilyVisible !== null && snap.lilyVisible !== undefined) {
@@ -271,6 +594,8 @@ async function refreshStatus() {
         applyStoryState({ state: 'disconnected', loaded: false, connection: null });
         CURRENT_CONTEXT = null; CURRENT_GAME = null; EVENTS_CONTEXT = LOST_CONTEXT = null;
         invalidateTrainer('连接已断开，请重连后刷新');
+        invalidateEncyclopedia('连接已断开，请重连后刷新');
+        invalidateWorldMap('连接已断开，请重连后刷新');
         renderGameSrc({gameRunning:false});
         $('#photo-target').textContent = '未连接游戏，不能保存';
         $('#photo-state').textContent = '';
@@ -320,14 +645,28 @@ $('#tp-land').onclick = async () => {
     btn.disabled = false;
 };
 
-$$('[data-nudge]').forEach(b => {
-    b.onclick = () => {
-        const [dx, dy] = b.dataset.nudge.split(',').map(Number);
-        $('#tp-x').value = Number($('#tp-x').value || 0) + dx;
-        $('#tp-y').value = Number($('#tp-y').value || 0) + dy;
-        $('#tp-go').click();
-    };
+let nudgeTimer = null, nudgeHeld = null, nudgeBusy = false;
+function stopNudge() { nudgeHeld = null; clearTimeout(nudgeTimer); }
+async function nudge(button) {
+    if (nudgeBusy) return;
+    nudgeBusy = true;
+    const context = CURRENT_CONTEXT;
+    try {
+        const [dx, dy] = button.dataset.nudge.split(',').map(Number);
+        const r = await api('/nudge', {dx,dy,pixels:Number($('#tp-step').value)});
+        if (context !== CURRENT_CONTEXT) return stopNudge();
+        $('#tp-x').value = Math.round(r.x * 10000) / 10000; $('#tp-y').value = Math.round(r.y * 10000) / 10000;
+        $('#tp-state').textContent = '悬停中';
+    } catch(e) { stopNudge(); toast(e.message, 'err'); }
+    finally { nudgeBusy = false; if (nudgeHeld === button) nudgeTimer = setTimeout(() => nudge(button), 100); }
+}
+$$('[data-nudge]').forEach(button => {
+    button.onpointerdown = ev => { if (ev.button !== 0) return; ev.preventDefault(); stopNudge(); nudgeHeld = button; button.setPointerCapture?.(ev.pointerId); nudge(button); };
+    button.onpointerup = button.onpointercancel = button.onlostpointercapture = stopNudge;
+    button.onclick = ev => { if (ev.detail === 0) nudge(button); };
 });
+window.addEventListener('blur', stopNudge);
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopNudge(); });
 
 // ---------- 本图事件 ----------
 let EVENTS = [];
@@ -847,11 +1186,11 @@ async function flipChip(id, fn) {
     el.disabled = false;
 }
 
-// 重力：高亮 = 正常。点一下切换成"关掉重力"（角色悬空）
-$('#q-gravity').onclick = () => flipChip('q-gravity', on => api('/gravity', { on: !on }));
+// 悬停：高亮 = 保持高度。关闭时走安全落地检查。
+$('#q-gravity').onclick = () => flipChip('q-gravity', on => api('/gravity', { on }));
 // 无敌 / 穿墙：高亮 = 开启
 $('#q-invincible').onclick = () => flipChip('q-invincible', on => api('/invincible', { on }));
-$('#q-noclip').onclick = () => flipChip('q-noclip', on => api('/noclip', { on }));
+$('#q-noclip').onclick = () => flipChip('q-noclip', async on => { const r = await api('/noclip', { on }); if (r.warning) toast(r.warning, 'err'); });
 // 莉莉娅：高亮 = 显示中
 // ⚠️ flipChip 传进来的是**按钮的新状态**（true = 希望莉莉娅显示），直接当 show 用。
 //    之前写成 show: !on，等于每次都"再显示一遍"，点了毫无反应（用户报过）。

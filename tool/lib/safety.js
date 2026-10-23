@@ -20,6 +20,15 @@ function contains(a, b) {
 }
 function validateConfig(config, gameDir) {
     const next = { ...config };
+    // 独立工作区可显式指定游戏；旧版放在游戏/aitemp 下的布局仍然可用。
+    if (next.gameDir !== undefined) {
+        next.gameDir = canonical(String(next.gameDir).trim());
+        for (const name of ['package.json', 'index.html']) {
+            const file = path.join(next.gameDir, name);
+            if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error('游戏目录不完整，缺少：' + file);
+        }
+        gameDir = next.gameDir;
+    }
     for (const key of ['cdpPort', 'webPort']) {
         const n = Number(next[key]);
         if (!Number.isInteger(n) || n < 1024 || n > 65535) throw new Error(`${key} 必须是 1024~65535 的整数`);

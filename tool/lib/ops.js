@@ -1,6 +1,13 @@
 const { installPhotoTools } = require('./photo-state');
 const { chooseStoryPosition } = require('./story-position');
 const { installTrainer } = require('./trainer');
+const { installMotion } = require('./motion');
+const { readEncyclopedia } = require('./encyclopedia');
+const { readWorldMap } = require('./world-map');
+const { readItemIcons } = require('./item-icons');
+const { installCombat } = require('./combat');
+const { catalogCellBounds,findCatalogLanding,planCatalogLanding } = require('./catalog-position');
+const CATALOG = `const catalogCellBounds=(${catalogCellBounds.toString()}),findCatalogLanding=(${findCatalogLanding.toString()}),planCatalogLanding=(${planCatalogLanding.toString()});`;
 const PHOTO = `const photo = (${installPhotoTools.toString()})();`;
 // 游戏操作脚本库
 //
@@ -8,12 +15,12 @@ const PHOTO = `const photo = (${installPhotoTools.toString()})();`;
 // 之所以存成字符串而非直接执行，是因为这些代码必须在游戏进程里跑，
 // 才能访问 $gamePlayer / $gameMap 这些游戏全局对象。
 //
-// ⚠️ 关键设计约束（来自 2026-10-02 实机探查，详见 aitemp/探查结果.md）：
+// ⚠️ 关键设计约束（当前规则见 tool/开发文档.md）：
 //   1. 传送必须用 $gamePlayer.locate(x, y)，不能手写 _x/_y/_realX/_realY
 //      —— 后者会漏掉物理引擎的 px/py，导致"画面过去了、碰撞体还在原地"
 //   2. 游戏有 4 套坐标系，locate() 内部会一次同步全部
 //   3. 无敌用 lockInvincible()（常驻）而非 makeInvincible()（会自己失效）
-//   4. 工具不负责读档 —— CDP 读档会崩（物理网格无法反序列化）
+//   4. 读档由用户在游戏正常菜单完成，不能裸调 loadGame（还需重建物理网格）
 
 /**
  * 包一层 IIFE，统一处理：游戏未进地图的守卫、异常捕获、JSON 返回格式。
@@ -23,12 +30,14 @@ const PHOTO = `const photo = (${installPhotoTools.toString()})();`;
  * CDP 那边开了 `awaitPromise: true`，所以返回 Promise 会被自动等待。
  * 同步的操作写成 async 也无妨，只是多包一层 Promise。
  */
-function wrap(body, { needMap = true } = {}) {
+function wrap(body, { needMap = true, allowMenu = false } = {}) {
     const guard = needMap ? `
         if (typeof $gamePlayer === 'undefined' || !$gamePlayer ||
             typeof $gameMap === 'undefined' || !$gameMap || $gameMap.mapId() === 0 ||
-            (typeof SceneManager !== 'undefined' && SceneManager._scene?.constructor.name !== 'Scene_Map')) {
-            return JSON.stringify({ ok: false, error: '游戏还没进入地图。请先在游戏里读档或开始游戏。' });
+            (typeof SceneManager !== 'undefined' && !${JSON.stringify(allowMenu ? ['Scene_Map', 'Scene_Menu', 'Scene_Shop'] : ['Scene_Map'])}.includes(SceneManager._scene?.constructor.name))) {
+            return JSON.stringify({ ok: false, error: typeof SceneManager !== 'undefined' && ['Scene_Menu','Scene_Shop'].includes(SceneManager._scene?.constructor.name)
+                ? '请先关闭游戏菜单，回到地图后再执行移动或剧情操作。'
+                : '游戏还没进入地图。请先在游戏里读档或开始游戏。' });
         }
     ` : '';
     return `(async function(){ try { ${guard} ${body} } catch (e) { return JSON.stringify({ ok:false, error: String(e && e.message || e) }); } })()`;
@@ -46,6 +55,7 @@ const SLEEP = `const sleep = (ms) => new Promise(r => setTimeout(r, ms));`;
  * 机制见开发文档第 6 节。
  */
 const SAFE_CHAR = `
+    const motion = (${installMotion.toString()})();
     // 清残留碰撞 + 重置落地锚点，否则 isFallDown() 会一直为真
     const safeChar = (c) => {
         if (!c) return;
@@ -63,7 +73,7 @@ const SAFE_CHAR = `
     const floatChar = (c) => {
         if (!c) return;
         safeChar(c);
-        try { c.suspendGravity(); c.suspendPhysicsHitTest(); } catch (e) {}
+        motion.enable(c, true);
     };
     // 莉莉娅在不在（她被移除时不该动她）
     const lilyAny = () => typeof $gameLily !== 'undefined' ? $gameLily : null;
@@ -110,13 +120,38 @@ const OPS = {
         `, { needMap: false });
     },
 
+    worldMapTravel(mapId,cellX,cellY,page){
+        if(!Number.isInteger(mapId)||mapId<1||![cellX,cellY,page].every(Number.isInteger))throw Error('地图分块坐标无效');
+        return this.teleport(0,0,{mapId,catalog:{cellX,cellY,page}});
+    },
+    worldMap(){
+        return wrap(`const trainer=(${installTrainer.toString()})();
+            const encyclopedia=(${readEncyclopedia.toString()})(trainer.read());
+            return JSON.stringify((${readWorldMap.toString()})(encyclopedia));`,{allowMenu:true});
+    },
+    catalogTravel(mapId,eventId){
+        if(!Number.isInteger(mapId)||mapId<1||!Number.isInteger(eventId)||eventId<1)throw Error('收集地点无效');
+        return this.teleport(0,0,{mapId,catalog:{eventId}});
+    },
+    combat(body=null){return wrap(`const api=(${installCombat.toString()})();return JSON.stringify(${body?`api.change(${JSON.stringify(body)})`:'api.read()'});`,{allowMenu:true});},
+    itemIcons() {
+        return wrap(`const trainer = (${installTrainer.toString()})();
+            return JSON.stringify(await (${readItemIcons.toString()})(trainer.read().items));`, { allowMenu: true });
+    },
+    encyclopedia() {
+        return wrap(`const trainer = (${installTrainer.toString()})();
+            return JSON.stringify((${readEncyclopedia.toString()})(trainer.read()));`, { allowMenu: true });
+    },
     trainer(body = null) {
         return wrap(`const trainer = (${installTrainer.toString()})();
-            return JSON.stringify(${body ? `trainer.change(${JSON.stringify(body)})` : 'trainer.read()'});`);
+            return JSON.stringify(${body ? `trainer.change(${JSON.stringify(body)})` : 'trainer.read()'});`, { allowMenu: true });
     },
     /** 读取当前游戏状态（供控制面板顶栏显示） */
     snapshot() {
         return wrap(`
+            if (window.__nyaruruMotion && window.__nyaruruMotion.version !== 5) (${installMotion.toString()})();
+            window.__nyaruruMotion?.touch();
+            window.__nyaruruCombat?.touch();
             if (window.__nyaruruPhoto?.touch) window.__nyaruruPhoto.touch();
             if (window.__nyaruruTrainer) window.__nyaruruTrainer.touch();
             const p = $gamePlayer, m = $gameMap;
@@ -129,12 +164,12 @@ const OPS = {
                 mapId: m.mapId(),
                 mapName: mi ? mi.name : ('地图 ' + m.mapId()),
                 mapSize: [m.width(), m.height()],
-                x: p._x,
-                y: p._y,
+                x: p.tileXToCenterX ? Math.round((p.px - p.tileXToCenterX(0)) / m.tileWidth() * 10000) / 10000 : p._x,
+                y: p.tileYToCenterY ? Math.round((p.py - p.tileYToCenterY(0)) / m.tileHeight() * 10000) / 10000 : p._y,
                 realX: p._realX,
                 realY: p._realY,
                 hp: bo ? bo.hp : null,
-                gravitySuspended: !!p.isSuspendGravity(),
+                gravitySuspended: !!window.__nyaruruMotion?.has(p),
                 invincible: !!p.isInvincible(),
                 noclip: !!p._suspendPhysicsHitTest,
                 // 莉莉娅在不在画面里（通关后她会一直跟着，可以用开关藏起来）
@@ -147,12 +182,14 @@ const OPS = {
                 uiHidden: SceneManager._scene.__nyaruruUiHidden || {message:false, artwork:false, hud:false},
                 switchesOn: (function(){ let n=0; for (let i=1;i<$dataSystem.switches.length;i++) if ($gameSwitches.value(i)) n++; return n; })(),
             });
-        `);
+        `, { allowMenu: true });
     },
 
     /** 实机 NW.js 用 chrome-extension URL；身份以 Node 入口和实际存档目录为准。 */
     selfPath() {
         return wrap(`
+            window.__nyaruruMotion?.touch();
+            window.__nyaruruCombat?.touch();
             if (window.__nyaruruTrainer) window.__nyaruruTrainer.touch();
             if (!window.__nyaruruIdentity) Object.defineProperty(window, '__nyaruruIdentity', {
                 value: { maps: new WeakMap(), next: 0, epoch: Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -167,14 +204,15 @@ const OPS = {
             const saveDir = typeof StorageManager !== 'undefined' ? StorageManager.fileDirectoryPath() : '';
             return JSON.stringify({ ok: true, gameDir, saveDir, href: String(location.href), pathname: String(location.pathname),
                 mapToken: state.epoch + ':' + (player ? state.maps.get(player) : 0) + ':' + mapId + ':' + (mapData ? state.maps.get(mapData) : 0),
-                mapId, inMap: typeof SceneManager !== 'undefined' && SceneManager._scene?.constructor.name === 'Scene_Map' });
+                mapId, inMap: typeof SceneManager !== 'undefined' && SceneManager._scene?.constructor.name === 'Scene_Map',
+                inMenu: mapId > 0 && ['Scene_Menu','Scene_Shop'].includes(SceneManager._scene?.constructor.name) });
         `, { needMap: false });
     },
 
     /**
      * 传送到指定格。
      *
-     * ⚠️ 这个函数处理了一个**实测踩出来的坑**，改动前务必先读 `探查结果.md` 与开发文档第 6 节。
+     * ⚠️ 这个函数处理了游戏物理坐标同步问题，改动前先读 `tool/开发文档.md` 的「功能模块与边界」。
      *
      * 游戏的"坠落复位"机制（nya_statem.js:5986）：
      *   isFallDown() 在玩家碰到 type===2 的地形（坑、虚空）时返回 true，
@@ -194,19 +232,23 @@ const OPS = {
      *
      * 用户想真正站到地上走动时，调用 land()。
      */
-    teleport(x, y, { float = true, mapId = null, story = null } = {}) {
+    teleport(x, y, { float = true, mapId = null, story = null, catalog = null } = {}) {
         if (x === null || y === null || x === '' || y === '' || !Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) throw new Error('坐标必须是有限数值');
         if (mapId !== null && (!Number.isInteger(Number(mapId)) || Number(mapId) < 1)) throw new Error('地图编号无效');
         return wrap(`
             ${SLEEP}
+            ${catalog ? CATALOG : ''}
             const p = $gamePlayer, m = $gameMap;
             const targetMap = ${mapId !== null && mapId !== undefined ? Number(mapId) : 'null'};
             const sameMap = (targetMap === null || targetMap === m.mapId());
             const fromMap = m.mapId();
             const previous = { x: p._x, y: p._y };
+            const priorPhysical={px:p.px,py:p.py};
+            let catalogPlacement = ${catalog ? `planCatalogLanding(targetMap,${JSON.stringify(catalog.eventId ?? catalog)})` : 'null'};
+            const destination=catalogPlacement||{x:${Number(x)},y:${Number(y)}};
 
-            const tx = Math.max(0, Math.min(m.width() - 1, Math.round(${Number(x)})));
-            const ty = Math.max(0, Math.min(m.height() - 1, Math.round(${Number(y)})));
+            const tx = catalogPlacement?destination.x:Math.max(0, Math.min(m.width() - 1, Math.round(destination.x)));
+            const ty = catalogPlacement?destination.y:Math.max(0, Math.min(m.height() - 1, Math.round(destination.y)));
 
             if (!sameMap) {
                 if (typeof $dataMapInfos === 'undefined' || !$dataMapInfos[targetMap]) return JSON.stringify({ok:false,error:'目标地图不存在'});
@@ -242,12 +284,33 @@ const OPS = {
                     });
                 }
                 // 换图后坐标可能被目标地图的出生点逻辑改过，再定一次位
-                const nx = Math.max(0, Math.min(m.width() - 1, Math.round(${Number(x)})));
-                const ny = Math.max(0, Math.min(m.height() - 1, Math.round(${Number(y)})));
-                p.locate(nx, ny);
+                if(!catalogPlacement){
+                    const nx = Math.max(0, Math.min(m.width() - 1, Math.round(destination.x)));
+                    const ny = Math.max(0, Math.min(m.height() - 1, Math.round(destination.y)));
+                    p.locate(nx, ny);
+                }
             } else {
-                p.locate(tx, ty);
+                if(!catalogPlacement)p.locate(tx, ty);
             }
+
+            ${catalog ? `
+            try{catalogPlacement=planCatalogLanding(targetMap,${JSON.stringify(catalog.eventId ?? catalog)},true);}
+            catch(error){
+                // A live gate/actor can differ from the cached terrain preview.
+                // Return to the starting map/position instead of forcing a landing.
+                if(!sameMap){
+                    p.reserveTransfer(fromMap,previous.x,previous.y,2,0);
+                    const rollbackStart=Date.now();
+                    while(Date.now()-rollbackStart<5000){await sleep(100);if($gameMap!==m||$gamePlayer!==p)break;if(m.mapId()===fromMap&&!p.isTransferring()&&SceneManager._scene?.constructor.name==='Scene_Map')break;}
+                    if($gameMap!==m||$gamePlayer!==p||m.mapId()!==fromMap||p.isTransferring())throw Error('目标分块未找到落点，返回原地图超时或游戏状态已变化，请检查游戏状态');
+                    const bx=(priorPhysical.px-p.tileXToCenterX(0))/m.tileWidth(),by=(priorPhysical.py-p.tileYToCenterY(0))/m.tileHeight();
+                    Game_CharacterBase.prototype.locate.call(p,bx,by);p.unflush(bx,by);
+                }
+                throw Error('目标分块暂时被地形或角色占用，已保留或返回原位置：'+error.message);
+            }
+            Game_CharacterBase.prototype.locate.call(p,catalogPlacement.x,catalogPlacement.y);
+            p.unflush(catalogPlacement.x,catalogPlacement.y);
+            ` : ''}
 
             let storyPlacement = null;
             const storyRequest = ${JSON.stringify(story ? { eventId: Number(story.eventId), pageIndex: story.pageIndex == null ? null : Number(story.pageIndex), storyId: Number(story.storyId) } : null)};
@@ -279,10 +342,14 @@ const OPS = {
             const floatMode = ${float ? 'true' : 'false'};
             if (floatMode) {
                 ${SAFE_CHAR}
-                floatChar(p);
+                ${catalog ? 'motion.enable(p);motion.setNoclip(p,false);' : 'floatChar(p);'}
                 const companion = lilyHere();
                 if (!sameMap && storyPlacement?.ok && storyPlacement.controller && companion?.locate) companion.locate(p._x, p._y);
-                floatChar(companion);
+                ${catalog ? `if(companion){
+                    const lx=(catalogPlacement.px-companion.tileXToCenterX(0))/m.tileWidth(),ly=(catalogPlacement.py-companion.tileYToCenterY(0))/m.tileHeight();
+                    Game_CharacterBase.prototype.locate.call(companion,lx,ly);companion.unflush(lx,ly);
+                    motion.enable(companion);motion.setNoclip(companion,false);
+                }` : 'floatChar(companion);'}
             }
 
             // 检测是否正在播放剧情 / 有事件在跑。
@@ -299,7 +366,8 @@ const OPS = {
 
             return JSON.stringify({
                 ok: storyPlacement?.ok !== false, error: storyPlacement?.error,
-                positionNote: storyPlacement?.positionNote,
+                positionNote: catalogPlacement?.positionNote||storyPlacement?.positionNote,
+                catalogCell:catalogPlacement?.bounds,
                 x: p._x, y: p._y, px: p.px, py: p.py,
                 mapId: m.mapId(),
                 changedMap: fromMap !== m.mapId(),
@@ -325,6 +393,22 @@ const OPS = {
      * 插件指令参数格式实测为 [插件名, 命令名, 显示文本, 参数对象] —— 4 个元素，
      * 参数在**第 3 位**（rmmz_objects.js:11315 的 command357 取的就是 params[3]）。
      */
+    nudge(dx, dy, pixels = 4) {
+        if (![dx, dy].every(Number.isInteger) || Math.abs(dx) + Math.abs(dy) !== 1 || !Number.isFinite(pixels) || pixels < 1 || pixels > 96) throw new Error('微调方向或像素步长无效');
+        return wrap(`
+            ${SAFE_CHAR}
+            const p = $gamePlayer, m = $gameMap;
+            const x = Math.max(0, Math.min(m.width() - 1, (p.px - p.tileXToCenterX(0) + ${dx * pixels}) / m.tileWidth()));
+            const y = Math.max(0, Math.min(m.height() - 1, (p.py - p.tileYToCenterY(0) + ${dy * pixels}) / m.tileHeight()));
+            // Base locate synchronizes physical coordinates without player locate's
+            // automatic floor search or companion transfer, which defeats tiny steps.
+            if (typeof Game_CharacterBase !== 'undefined') Game_CharacterBase.prototype.locate.call(p, x, y);
+            else p.locate(x, y);
+            p.unflush(x, y); floatChar(p);
+            const lily = lilyHere(); if (lily) floatChar(lily);
+            return JSON.stringify({ok:true,x,y,px:p.px,py:p.py});
+        `);
+    },
     playStory(storyId) {
         return wrap(`
             ${SLEEP}
@@ -1116,6 +1200,7 @@ const OPS = {
             }
 
             // 恢复碰撞；锚点设到落点，确保万一出岔子也落在附近而不是旧地图的位置
+            window.__nyaruruMotion?.disable(p);
             p.resumePhysicsHitTest();
             p.clearImpact && p.clearImpact();
             p._impact = null;
@@ -1132,7 +1217,7 @@ const OPS = {
                     const hits = (lily.hitPreview(0, dy) || []).filter(o => o && o.terrain === true);
                     if (hits.length) { safe = !hits.some(o => o.type === 2); break; }
                 }
-                if (safe) { safeChar(lily); lily.resumeGravity(); lily.resumePhysicsHitTest(); lilyLanded = true; }
+                if (safe) { motion.disable(lily); safeChar(lily); lily.resumeGravity(); lily.resumePhysicsHitTest(); lilyLanded = true; }
                 else { floatChar(lily); warning = '主角已落地；莉莉娅脚下不安全，仍保持悬浮。请移动到安全地面再点落地'; }
             }
             return JSON.stringify({ ok: true, dropDistance: found, lilyLanded, warning });
@@ -1147,7 +1232,7 @@ const OPS = {
                 out[i] = $gameSwitches.value(i) ? 1 : 0;
             }
             return JSON.stringify({ ok: true, values: out });
-        `);
+        `, { allowMenu: true });
     },
 
     /** 设置单个开关 */
@@ -1178,14 +1263,15 @@ const OPS = {
      * 并触发坠落复位循环（用户实测反馈过）。
      */
     setGravity(suspended) {
+        if (!suspended) return this.land();
         const on = suspended ? 'true' : 'false';
         return wrap(`
             ${SAFE_CHAR}
             const p = $gamePlayer;
             const lh = lilyAny();
             if (${on}) {
-                floatChar(p);
-                if (lh) floatChar(lh);
+                safeChar(p); motion.enable(p);
+                if (lh) { safeChar(lh); motion.enable(lh); }
             } else {
                 p.resumeGravity();
                 p.resumePhysicsHitTest();
@@ -1221,13 +1307,16 @@ const OPS = {
         return wrap(`
             ${SAFE_CHAR}
             const p = $gamePlayer;
+            if (!${on ? 'true' : 'false'} && (p.hitPreview(0, 0) || []).some(o => o?.terrain === true)) return JSON.stringify({ok:false,error:'当前与地形重叠，请先微调到空处再关闭穿墙'});
+            let warning = '';
             for (const c of [p, lilyAny()]) {
                 if (!c) continue;
                 safeChar(c);
-                if (${on ? 'true' : 'false'}) c.suspendPhysicsHitTest();
-                else c.resumePhysicsHitTest();
+                if (${on ? 'true' : 'false'}) motion.enable(c, true);
+                else if (c !== p && (c.hitPreview(0,0) || []).some(o => o?.terrain === true)) warning = '莉莉娅与地形重叠，仍保持穿墙悬停';
+                else motion.setNoclip(c,false);
             }
-            return JSON.stringify({ok:true,noclip:!!p._suspendPhysicsHitTest});
+            return JSON.stringify({ok:true,noclip:!!p._suspendPhysicsHitTest,warning});
         `);
     },
 
@@ -1242,6 +1331,8 @@ const OPS = {
             const lh = lilyAny();
             if (window.__nyaruruPhoto) window.__nyaruruPhoto.unpinAll();
             if (window.__nyaruruTrainer) window.__nyaruruTrainer.clear();
+            window.__nyaruruCombat?.clear();
+            motion.clear();
             // 玩家和莉莉娅都要清 —— 只清玩家的话，同伴会继续坠落复位循环
             for (const c of [p, lh]) {
                 if (!c) continue;

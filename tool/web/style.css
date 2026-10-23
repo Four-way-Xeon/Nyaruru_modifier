@@ -1,5 +1,41 @@
 /* 咸鱼喵喵 · 截图辅助工具 —— 控制面板样式 */
 
+.world-map-layout { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:16px; margin-top:12px; }
+#world-map-viewport { height:560px; min-width:0; position:relative; overflow:hidden; border:1px solid var(--border); border-radius:10px; background:#121019; touch-action:none; cursor:grab; }
+#world-map-viewport:active { cursor:grabbing; }
+#world-map-viewport:focus-visible { outline:2px solid var(--accent); }
+#world-map-svg { width:100%; height:100%; display:block; user-select:none; }
+#world-map-empty { position:absolute; inset:0; pointer-events:none; padding:70px 20px; }
+#world-map-empty[hidden] { display:none; }
+.world-floor { fill:#635375; stroke:#706480; stroke-width:.4; }
+.world-cell.unexplored .world-floor { fill:#302b3d; }
+.world-wall { fill:none; stroke:#d3c7e2; stroke-width:2; }
+.world-cell.unexplored .world-wall { stroke:#8e829f; stroke-dasharray:4 3; }
+.world-cell-outline { fill:none; stroke:transparent; stroke-width:2; pointer-events:none; }
+.world-cell:hover .world-floor { fill:#847098; }
+.world-cell.selected .world-cell-outline { stroke:#ff8ab8; stroke-width:3; }
+.world-cell.current .world-cell-outline { stroke:#5fd39a; stroke-width:3; }
+.world-player { fill:#5fd39a; stroke:#12271d; stroke-width:2; pointer-events:none; }
+.world-marker { cursor:pointer; }
+.world-marker rect { fill:#21152c; stroke:#bd92cb; stroke-width:.7; }
+.world-marker text { fill:#ffd46b; font-size:13px; text-anchor:middle; font-weight:bold; }
+.world-marker.collected { filter:grayscale(1); opacity:.65; }
+.world-marker .world-marker-state { fill:white; stroke:#15101e; stroke-width:2; paint-order:stroke; font-size:11px; }
+.world-map-detail { min-width:0; max-height:560px; overflow:auto; padding:14px; border:1px solid var(--border); border-radius:10px; overflow-wrap:anywhere; }
+.world-map-detail h3 { margin-top:0; }
+.world-detail-item { padding:12px 0; border-top:1px solid var(--border); }
+.world-detail-item.focused { border-left:3px solid var(--accent); padding-left:9px; }
+.world-detail-item p { margin:6px 0; }
+.world-detail-item .item-art, .world-detail-item .item-art img { width:36px; height:36px; flex-basis:36px; }
+.world-map-controls select { max-width:100%; }
+#panel-world-map { min-width:0; }
+@media(max-width:760px) {
+    .world-map-layout { grid-template-columns:minmax(0,1fr); }
+    #world-map-viewport { height:440px; }
+    .world-map-detail { max-height:360px; }
+    .world-map-controls label { max-width:100%; }
+}
+
 :root {
     --bg:        #14121a;
     --bg-card:   #1e1b26;
@@ -306,3 +342,37 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .trainer-stat .row { margin-top: 12px; flex-wrap: wrap; }
 .trainer-stat input, #trainer-items input[type=number] { width: 95px; }
 #trainer-items .item { flex-wrap: wrap; }
+/* Inventory and collection encyclopedia */
+select { background:var(--bg-input); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font:inherit; max-width:100%; }
+#photo-state:empty { display:none; }
+.inventory-row { align-items: flex-start; }
+#combat-outgoing,#combat-incoming { width:100px; }
+.inventory-main { display:flex; gap:16px; flex:1 1 430px; min-width:0; }
+.item-art { display:flex; align-items:center; justify-content:center; flex:0 0 76px; width:76px; height:76px; border:1px solid var(--border); border-radius:12px; background:rgba(255,255,255,.035); }
+.item-art img { display:block; width:64px; height:64px; object-fit:contain; image-rendering:pixelated; }
+.icon-placeholder { color:var(--text-dim); font-size:28px; }
+#trainer-items .inventory-row { padding:16px; gap:16px; }
+#trainer-items .inventory-row .name { font-size:18px; line-height:1.5; margin-bottom:4px; }
+#trainer-items .inventory-row .meta { font-size:13px; }
+#trainer-items .inventory-row .item-description { font-size:16px; line-height:1.75; color:#d6d1df; margin-top:6px; }
+.inventory-row.missing { border-left: 3px solid #b9bcc8; }
+.inventory-row.owned { border-left: 3px solid #5ea988; }
+.item-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; justify-content:flex-end; }
+.item-actions input { width:90px; }
+.collection-regions { display:flex; flex-wrap:wrap; gap:10px; margin:16px 0; }
+.collection-region { display:grid; gap:5px; text-align:left; min-width:155px; }
+.collection-region span { font-size:12px; opacity:.8; }
+.collection-region progress { width:100%; height:7px; accent-color:#6f8e72; }
+.catalog-list { display:grid; gap:10px; margin-top:16px; }
+.catalog-item { border:1px solid var(--border, #d9dce5); border-radius:10px; overflow:hidden; }
+.catalog-item > summary { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; padding:16px; cursor:pointer; }
+.catalog-item > summary::before { content:'▸'; opacity:.6; }
+.catalog-item[open] > summary::before { content:'▾'; }
+.catalog-title { flex:1; font-weight:600; }
+.catalog-content { padding:0 16px 16px; }
+.catalog-location { display:flex; align-items:center; gap:12px; border-top:1px solid var(--border, #d9dce5); padding:12px 0; }
+.shop-sources { margin-top:14px; }
+.shop-sources summary { cursor:pointer; }
+.tag.warn { background:#fff0d1; color:#865313; }
+[data-nudge] { touch-action:none; user-select:none; min-width:44px; }
+@media(max-width:700px) { .inventory-row { flex-wrap:wrap; } .item-actions { width:100%; justify-content:flex-start; } .catalog-item > summary { align-items:flex-start; } .catalog-location { flex-wrap:wrap; } }

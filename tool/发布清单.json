@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "files": [
     "tool/启动.bat",
     "tool/停止面板.bat",
@@ -26,8 +26,22 @@
     "unpacked/data/System.json",
     "unpacked/data/MapInfos.json",
     "README.md",
-    ".gitignore"
+    ".gitignore",
+    "tool/lib/catalog-position.js",
+    "tool/lib/combat.js",
+    "tool/lib/encyclopedia.js",
+    "tool/lib/item-icons.js",
+    "tool/lib/motion.js",
+    "tool/lib/world-map.js",
+    "tool/开发文档.md",
+    "CHANGELOG.md",
+    "tool/package-release.js",
+    "tool/config.example.json",
+    "docs/images/world-map.png",
+    "docs/images/inventory.png",
+    "docs/images/encyclopedia.png"
   ],
   "optionalRuntime": "nwjs-sdk-v0.64.1-win-x64/",
-  "note": "本包仅含工具及必要结构索引；台词从游戏运行时读取。Node.js 和 NW.js SDK 需另行安装。"
+  "note": "本包仅含工具及必要结构索引；台词从游戏运行时读取。Node.js 和 NW.js SDK 需另行安装。",
+  "release": "2026-10-24"
 }

@@ -25,7 +25,7 @@ const { assertGamesStopped } = require('./lib/processes');
 // ---------- 路径与配置 ----------
 const TOOL_DIR = __dirname;
 const AITEMP_DIR = path.resolve(TOOL_DIR, '..');            // aitemp/
-const GAME_DIR = path.resolve(AITEMP_DIR, '..');            // 游戏根目录
+const LEGACY_GAME_DIR = path.resolve(AITEMP_DIR, '..');     // 旧布局的游戏根目录
 const WEB_DIR = path.join(TOOL_DIR, 'web');
 const BACKUP_DIR = path.join(AITEMP_DIR, 'backups');
 const CONFIG_FILE = path.join(TOOL_DIR, 'config.json');
@@ -33,7 +33,7 @@ const CONFIG_FILE = path.join(TOOL_DIR, 'config.json');
 // 沙盒默认位置：和游戏同一个盘的根目录下。
 // ⚠️ 不要写死具体盘符 —— 别人的游戏不一定装在 L 盘。
 //    放在盘根是为了**避开 Steam 库**（放库里 Steam 会扫到，云同步也可能够得着）。
-const DEFAULT_SANDBOX = path.join(path.parse(GAME_DIR).root, 'Nyaruru_shots');
+const DEFAULT_SANDBOX = path.join(path.parse(LEGACY_GAME_DIR).root, 'Nyaruru_shots');
 
 const DEFAULTS = {
     cdpPort: 9223,                                          // 沙盒实例的调试端口
@@ -41,8 +41,9 @@ const DEFAULTS = {
     webPort: 8787,
 };
 
-function loadConfig() { return SAFETY.readConfig(CONFIG_FILE, DEFAULTS, GAME_DIR); }
+function loadConfig() { return SAFETY.readConfig(CONFIG_FILE, DEFAULTS, LEGACY_GAME_DIR); }
 const CONFIG = loadConfig();
+const GAME_DIR = CONFIG.gameDir || LEGACY_GAME_DIR;
 function classifyGameDir(dir) {
     if (!dir) return 'unknown';
     try {
@@ -108,7 +109,7 @@ function targetDir(body) {
 }
 let operationTail = Promise.resolve();
 const offlineActions = new Set(['/api/config', '/api/backup', '/api/restore-backup', '/api/sandbox', '/api/shutdown', '/api/story-text']);
-const getRoutes = new Set(['/api/trainer', '/api/status', '/api/snapshot', '/api/maps', '/api/switches', '/api/config', '/api/ground', '/api/events/lost', '/api/events', '/api/triggers', '/api/backups', '/api/sandbox/status', '/api/health', '/api/story-text']);
+const getRoutes = new Set(['/api/status', '/api/snapshot', '/api/trainer', '/api/item-icons', '/api/encyclopedia', '/api/world-map', '/api/combat', '/api/maps', '/api/switches', '/api/config', '/api/ground', '/api/events/lost', '/api/events', '/api/triggers', '/api/backups', '/api/sandbox/status', '/api/health', '/api/story-text']);
 async function identity() {
     const r = await cdp.evalJson(OPS.selfPath());
     if (!r?.ok) throw new Error(r?.error || '无法识别游戏实例');
@@ -172,6 +173,12 @@ async function executeApi(req, res, urlPath, body) {
         return cdp.evalJson(current ? guarded(script, current.mapToken) : script);
     };
     switch (urlPath) {
+        case '/api/encyclopedia/travel':return sendJson(res,await game(OPS.catalogTravel(body.mapId,body.eventId)));
+        case '/api/world-map/travel':return sendJson(res,await game(OPS.worldMapTravel(body.mapId,body.cellX,body.cellY,body.page)));
+        case '/api/combat': {
+            if(req.method==='GET')current=await identity();
+            const r=await game(OPS.combat(req.method==='POST'?body:null));return sendJson(res,{...r,context:current.context});
+        }
         case '/api/shutdown': {
             if (sandboxJob.running) throw new Error('沙盒仍在复制，请等待任务结束再停止面板');
             sendJson(res, { ok: true });
@@ -191,7 +198,7 @@ async function executeApi(req, res, urlPath, body) {
 
             // 顺手问一句：游戏窗口自己是从哪个目录加载的？
             // 面板据此显示"当前连接：沙盒 / 原版"，把"以为在沙盒、其实改了原版"这种
-            // 误用摆在明面上（见 复查与隐患.md 坑 5）。
+            // 将实际实例身份显示给用户；约定见 tool/开发文档.md。
             let gameSelf = null;
             if (connected) { try { gameSelf = await identity(); } catch { connected = false; } }
             if (!connected) {
@@ -215,6 +222,24 @@ async function executeApi(req, res, urlPath, body) {
         }
 
         // --- 游戏状态快照 ---
+        case '/api/world-map': {
+            if (req.method !== 'GET') throw new Error('世界地图为只读功能');
+            const before = await identity();
+            const r = await cdp.evalJson(guarded(OPS.worldMap(), before.mapToken));
+            return sendJson(res, { ...r, context: before.context });
+        }
+        case '/api/encyclopedia': {
+            if (req.method !== 'GET') throw new Error('百科为只读功能');
+            const before = await identity();
+            const r = await cdp.evalJson(guarded(OPS.encyclopedia(), before.mapToken));
+            return sendJson(res, { ...r, context: before.context });
+        }
+        case '/api/item-icons': {
+            if (req.method !== 'GET') throw new Error('图标为只读功能');
+            const before = await identity();
+            const r = await cdp.evalJson(guarded(OPS.itemIcons(), before.mapToken));
+            return sendJson(res, { ...r, context:before.context });
+        }
         case '/api/trainer': {
             if (req.method === 'GET') current = await identity();
             const r = await game(OPS.trainer(req.method === 'POST' ? body : null));
@@ -264,6 +289,7 @@ async function executeApi(req, res, urlPath, body) {
             }));
             return sendJson(res, r);
         }
+        case '/api/nudge': return sendJson(res, await game(OPS.nudge(body.dx, body.dy, body.pixels)));
 
         // --- 直接播放一段剧情序列 ---
         // 绕开地图事件与开关条件，用于通关存档上复现"错过就没了"的对话
@@ -345,7 +371,7 @@ async function executeApi(req, res, urlPath, body) {
         case '/api/restore': return sendJson(res, await game(OPS.restoreAll()));
 
         // --- 场景还原（摆拍）：扫描本图丢失的角色 → 强行切页让它们出现 ---
-        // 静态摆拍与撤销由 photo-state 管理；自动和手动存档照常，仅提示风险。
+        // 静态摆拍与撤销由 photo-state 管理，自动和手动存档照常，仅提示风险。
         case '/api/events/lost': {
             const before = await identity();
             const r = await cdp.evalJson(guarded(OPS.scanLostEvents(), before.mapToken));

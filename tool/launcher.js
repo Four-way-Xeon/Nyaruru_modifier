@@ -7,7 +7,7 @@ const { readConfig, samePath } = require('./lib/safety');
 const FILES = require('./lib/files');
 const { CdpClient } = require('./lib/cdp');
 const { OPS } = require('./lib/ops');
-const TOOL = __dirname, AITEMP = path.dirname(TOOL), GAME = path.dirname(AITEMP);
+const TOOL = __dirname, AITEMP = path.dirname(TOOL), LEGACY_GAME = path.dirname(AITEMP);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function listening(port) {
     return new Promise(resolve => {
@@ -26,7 +26,8 @@ async function panel(config, matchConfig = true) {
 }
 async function main() {
     if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('需要 Node.js 22 或更新版本');
-    const config = readConfig(path.join(TOOL, 'config.json'), { cdpPort: 9223, sandboxDir: path.join(path.parse(GAME).root, 'Nyaruru_shots'), webPort: 8787 }, GAME);
+    const config = readConfig(path.join(TOOL, 'config.json'), { cdpPort: 9223, sandboxDir: path.join(path.parse(LEGACY_GAME).root, 'Nyaruru_shots'), webPort: 8787 }, LEGACY_GAME);
+    const GAME = config.gameDir || LEGACY_GAME;
     if (process.argv.includes('--stop')) {
         const runtimeFile = path.join(TOOL, '.server-runtime.json');
         const port = fs.existsSync(runtimeFile) ? JSON.parse(fs.readFileSync(runtimeFile, 'utf8')).port : config.webPort;
