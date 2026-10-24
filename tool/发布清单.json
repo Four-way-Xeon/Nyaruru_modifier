@@ -1,6 +1,8 @@
 {
   "version": 2,
+  "productVersion": "V1.1",
   "files": [
+    "VERSION",
     "tool/启动.bat",
     "tool/停止面板.bat",
     "tool/launcher.js",
